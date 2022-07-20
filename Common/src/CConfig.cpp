@@ -933,6 +933,8 @@ void CConfig::SetPointersNull(void) {
 
   Aeroelastic_plunge  = nullptr;
   Aeroelastic_pitch   = nullptr;
+  //Aeroelastic_plunge_rate  = nullptr;
+  //Aeroelastic_pitch_rate   = nullptr;
 
   CFL_AdaptParam      = nullptr;
   CFL                 = nullptr;
@@ -969,6 +971,7 @@ void CConfig::SetPointersNull(void) {
   Kind_SurfaceMovement = nullptr;
   LocationStations   = nullptr;
   MarkerMotion_Origin     = nullptr;
+  ///MarkerMotion_Origin_HB  = nullptr;
   MarkerTranslation_Rate  = nullptr;
   MarkerRotation_Rate     = nullptr;
   MarkerPitching_Omega    = nullptr;
@@ -976,7 +979,10 @@ void CConfig::SetPointersNull(void) {
   MarkerPitching_Phase    = nullptr;
   MarkerPlunging_Omega    = nullptr;
   MarkerPlunging_Ampl     = nullptr;
-  RefOriginMoment_X   = nullptr;    RefOriginMoment_Y   = nullptr;    RefOriginMoment_Z   = nullptr;
+  MarkerPlunging_Phase    = nullptr;
+
+  RefOriginMoment_X    = nullptr;   RefOriginMoment_Y    = nullptr;   RefOriginMoment_Z    = nullptr;
+  RefOriginMoment_X_HB = nullptr;   RefOriginMoment_Y_HB = nullptr;   RefOriginMoment_Z_HB = nullptr;
   MoveMotion_Origin   = nullptr;
 
   /*--- Periodic BC pointers. ---*/
@@ -985,7 +991,20 @@ void CConfig::SetPointersNull(void) {
 
   /* Harmonic Balance Frequency pointer */
 
-  Omega_HB = nullptr;
+  Omega_HB   = nullptr;
+ // Disp_HB    = nullptr;
+  
+  Pitch_HB       = nullptr;
+  Pitch_rate_HB  = nullptr;
+  Plunge_HB      = nullptr;
+  Plunge_rate_HB = nullptr;
+  
+//Mod_Disp_HB = nullptr; 
+//Mod_Velo_HB = nullptr; 
+
+  Omega_Aero = nullptr;
+  Omega_Mode = nullptr;
+  Ampl_Mode  = nullptr;
 
   /*--- Initialize some default arrays to NULL. ---*/
 
@@ -1035,12 +1054,27 @@ void CConfig::SetPointersNull(void) {
   nIntCoeffs = 0;
   OuterIter  = 0;
 
+  AeroIter = 0;
+
   AoA_Offset = 0;
   AoS_Offset = 0;
 
   nMarker_PerBound = 0;
 
   Aeroelastic_Simulation = false;
+
+  ///Aeroelastic_Modal = false;
+
+  Aeroelastic_Imposed = false;
+
+  Bnd_Velo = false;
+  HB_Velo  = false;
+ 
+  HB_Flutter_flag = false;
+  HB_LCO_flag     = false;
+
+//nWingModes = 2;
+//nWingDofs  = 2;
 
   nSpanMaxAllZones = 1;
 
@@ -1054,6 +1088,8 @@ void CConfig::SetPointersNull(void) {
   Delta_UnstTimeND = 0.0;
   Total_UnstTime = 0.0;
   Total_UnstTimeND = 0.0;
+
+  PseudoTimeStep = 1.0;
 
   Kind_TimeNumScheme = EULER_IMPLICIT;
 
@@ -1705,6 +1741,10 @@ void CConfig::SetConfig_Options() {
   addDoubleOption("HB_PERIOD", HarmonicBalance_Period, -1.0);
   /* DESCRIPTION:  Turn on/off harmonic balance preconditioning */
   addBoolOption("HB_PRECONDITION", HB_Precondition, false);
+  addBoolOption("HB_AEROELASTICITY", HBAero_flag, false);
+  addBoolOption("MODAL_AEROELASTICITY", Aeroelastic_Modal, false);
+  addBoolOption("HB_LCO", HB_LCO_flag, false); 
+  addBoolOption("HB_FLUTTER", HB_Flutter_flag, false);
   /* DESCRIPTION: Starting direct solver iteration for the unsteady adjoint */
   addLongOption("UNST_ADJOINT_ITER", Unst_AdjointIter, 0);
   /* DESCRIPTION: Number of iterations to average the objective */
@@ -2101,6 +2141,8 @@ void CConfig::SetConfig_Options() {
   /* DESCRIPTION: Type of surface motion */
   addEnumListOption("SURFACE_MOVEMENT",nKind_SurfaceMovement, Kind_SurfaceMovement, SurfaceMovement_Map);
   /* DESCRIPTION: Marker(s) of moving surfaces (MOVING_WALL or DEFORMING grid motion). */
+  addBoolOption("BOUNDARY_VELOCITY", Bnd_Velo, false);
+  addBoolOption("HB_VELOCITY", HB_Velo, false);
   addStringListOption("MARKER_MOVING", nMarker_Moving, Marker_Moving);
   /* DESCRIPTION: Marker(s) of gradient problem boundaries. */
   addStringListOption("MARKER_SOBOLEVBC", nMarker_SobolevBC, Marker_SobolevBC);
@@ -2122,6 +2164,8 @@ void CConfig::SetConfig_Options() {
   addDoubleArrayOption("PLUNGING_OMEGA", 3, Plunging_Omega);
   /* DESCRIPTION: Plunging amplitude (m) in x, y, & z directions (RIGID_MOTION only) */
   addDoubleArrayOption("PLUNGING_AMPL", 3, Plunging_Ampl);
+
+  addDoubleArrayOption("PLUNGING_PHASE", 3, Plunging_Phase);
   /* DESCRIPTION: Coordinates of the rigid motion origin */
   addDoubleListOption("SURFACE_MOTION_ORIGIN", nMarkerMotion_Origin, MarkerMotion_Origin);
   /* DESCRIPTION: Translational velocity vector (m/s) in the x, y, & z directions (DEFORMING only) */
@@ -2138,6 +2182,8 @@ void CConfig::SetConfig_Options() {
   addDoubleListOption("SURFACE_PLUNGING_OMEGA", nMarkerPlunging_Omega, MarkerPlunging_Omega);
   /* DESCRIPTION: Plunging amplitude (m) in x, y, & z directions (DEFORMING only) */
   addDoubleListOption("SURFACE_PLUNGING_AMPL", nMarkerPlunging_Ampl, MarkerPlunging_Ampl);
+
+  addDoubleListOption("SURFACE_PLUNGING_PHASE", nMarkerPlunging_Phase, MarkerPlunging_Phase);
   /* DESCRIPTION: Value to move motion origins (1 or 0) */
   addUShortListOption("MOVE_MOTION_ORIGIN", nMoveMotion_Origin, MoveMotion_Origin);
 
@@ -2160,7 +2206,22 @@ void CConfig::SetConfig_Options() {
   addDoubleOption("RADIUS_GYRATION_SQUARED", RadiusGyrationSquared, 3.48);
   /* DESCRIPTION: Solve the aeroelastic equations every given number of internal iterations. */
   addUnsignedShortOption("AEROELASTIC_ITER", AeroelasticIter, 3);
+  addUnsignedShortOption("AEROELASTIC_MODES", nWingModes, 2);
+  addUnsignedShortOption("STRUCTURAL_DOFS", nWingDofs, 2);
 
+  addStringOption("STRUCTURE_FILENAME", STR_File, string("StructuralModel"));
+ 
+  addUnsignedShortOption("RBF_METHOD", RBF_Method, 0);
+
+  addUnsignedLongOption("STRUCTURAL_POINTS",nSTRpoints,100);
+
+  addDoubleOption("ROOT_WING_CHORD", RootChord, 0.0);
+  addDoubleOption("TIP_WING_CHORD", TipChord, 0.0);
+  addDoubleOption("WING_SPAN", WingSpan, 0.0);
+
+  addDoubleOption("WING_VOL_TRUN_CONE", WingVol, 0.0);
+  addDoubleOption("SCALE_PARAM", Scale_Parameter, 1.0);
+ 
   /*!\par CONFIG_CATEGORY: Optimization Problem*/
 
   /* DESCRIPTION: Scale the line search in the optimizer */
@@ -2198,7 +2259,11 @@ void CConfig::SetConfig_Options() {
   /* Harmonic Balance config */
   /* DESCRIPTION: Omega_HB = 2*PI*frequency - frequencies for Harmonic Balance method */
   addDoubleListOption("OMEGA_HB", nOmega_HB, Omega_HB);
-
+  addDoubleListOption("OMEGA_AERO", nWingModes, Omega_Aero);
+  addDoubleListOption("OMEGA_MODE", nWingModes, Omega_Mode);
+  addDoubleListOption("AMPL_MODE", nWingModes, Ampl_Mode);
+  addBoolOption("MODAL_IMPOSED", Aeroelastic_Imposed, false);
+ 
   /*!\par CONFIG_CATEGORY: Equivalent Area \ingroup Config*/
   /*--- Options related to the equivalent area ---*/
 
@@ -2466,6 +2531,9 @@ void CConfig::SetConfig_Options() {
   addUnsignedLongOption("OUTER_ITER", nOuterIter, 1);
   /* DESCRIPTION: Number of inner iterations in each multizone block. */
   addUnsignedLongOption("INNER_ITER", nInnerIter, 1);
+  addUnsignedLongOption("AERO_ITER", nAeroIter, 1);
+  addUnsignedLongOption("FREQ_ITER", nFreqIter, 1);
+  addDoubleOption("PSEUDO_TIME_STEP", PseudoTimeStep, 1.0); 
   /* DESCRIPTION: Number of time steps solved in the multizone problem. */
   addUnsignedLongOption("TIME_ITER", nTimeIter, 1);
   /* DESCRIPTION: Number of iterations in each single-zone block. */
@@ -3963,6 +4031,13 @@ void CConfig::SetPostprocessing(SU2_COMPONENT val_software, unsigned short val_i
     if (nMarkerPlunging_Omega/3 != nMarker_Moving){
       SU2_MPI::Error("Number of SURFACE_PLUNGING_OMEGA must be three times the number of MARKER_MOVING, (x,y,z) per marker.", CURRENT_FUNCTION);
     }
+    if (nMarkerPlunging_Phase == 0){
+      nMarkerPlunging_Phase = 3*nMarker_Moving;
+      MarkerPlunging_Phase = new su2double[nMarkerPlunging_Phase] ();
+    }
+    if (nMarkerPlunging_Omega/3 != nMarker_Moving){
+      SU2_MPI::Error("Number of SURFACE_PLUNGING_PHASE must be three times the number of MARKER_MOVING, (x,y,z) per marker.", CURRENT_FUNCTION);
+    }
     if (nMarkerPitching_Ampl == 0){
       nMarkerPitching_Ampl = 3*nMarker_Moving;
       MarkerPitching_Ampl = new su2double[nMarkerPitching_Ampl] ();
@@ -4003,6 +4078,48 @@ void CConfig::SetPostprocessing(SU2_COMPONENT val_software, unsigned short val_i
     HarmonicBalance_Period = GetHarmonicBalance_Period();
     if (HarmonicBalance_Period < 0)  {
       SU2_MPI::Error("Not a valid value for time period!!", CURRENT_FUNCTION);
+    }
+
+    Pitch_HB       = new su2double[nOmega_HB];
+    Plunge_HB      = new su2double[nOmega_HB];
+    Pitch_rate_HB  = new su2double[nOmega_HB];
+    Plunge_rate_HB = new su2double[nOmega_HB];
+
+////Mod_Disp_HB = new su2double*[nWingModes];
+////Mod_Velo_HB = new su2double*[nWingModes];
+////for (unsigned short iZone = 0; iZone < nWingModes; iZone++){
+
+////  Mod_Disp_HB[iZone] = new su2double[nOmega_HB];	     
+////  Mod_Velo_HB[iZone] = new su2double[nOmega_HB];	    
+////}
+    Mod_Disp_HB.resize(nWingModes);
+    Mod_Velo_HB.resize(nWingModes);
+    for (unsigned short iZone = 0; iZone < nWingModes; iZone++){
+
+      Mod_Disp_HB[iZone].resize(nOmega_HB);	     
+      Mod_Velo_HB[iZone].resize(nOmega_HB);	    
+    }
+
+    RefOriginMoment_X_HB = new su2double[nOmega_HB];
+    RefOriginMoment_Y_HB = new su2double[nOmega_HB];
+    RefOriginMoment_Z_HB = new su2double[nOmega_HB];
+
+    for (unsigned short iZone = 0; iZone < nOmega_HB; iZone++ ) {
+    
+        Pitch_HB[iZone] = 0.0;
+        Pitch_rate_HB[iZone] = 0.0;
+        Plunge_HB[iZone] = 0.0;
+        Plunge_rate_HB[iZone] = 0.0;
+
+        RefOriginMoment_X_HB[iZone] = 0.0;
+        RefOriginMoment_Y_HB[iZone] = 0.0;
+        RefOriginMoment_Z_HB[iZone] = 0.0;
+
+        for (unsigned short jZone = 0; jZone < nWingModes; jZone++){
+
+             Mod_Disp_HB[jZone][iZone] = 0.0;	    
+             Mod_Velo_HB[jZone][iZone] = 0.0;	    
+        }
     }
     /* Initialize the Harmonic balance Frequency pointer */
     if (Omega_HB == nullptr) {
@@ -4196,10 +4313,28 @@ void CConfig::SetPostprocessing(SU2_COMPONENT val_software, unsigned short val_i
   if (GetGrid_Movement() && (GetSurface_Movement(AEROELASTIC) || GetSurface_Movement(AEROELASTIC_RIGID_MOTION))) Aeroelastic_Simulation = true;
   else Aeroelastic_Simulation = false;
 
+//if (nWingModes>2) Aeroelastic_Modal = true;
+//else nWingModes=2;
+
   /*--- Initializing the size for the solutions of the Aeroelastic problem. ---*/
+  if (Omega_Aero == nullptr) {
+      Omega_Aero = new su2double[nWingModes];
+      for (unsigned short iZone = 0; iZone < nWingModes; iZone++ )
+        Omega_Aero[iZone] = 0.0;  
+  }
+  if (Omega_Mode == nullptr) {
+      Omega_Mode = new su2double[nWingModes];
+      for (unsigned short iZone = 0; iZone < nWingModes; iZone++ )
+        Omega_Mode[iZone] = 0.0;  
+  }
+  if (Ampl_Mode == nullptr) {
+      Ampl_Mode = new su2double[nWingModes];
+      for (unsigned short iZone = 0; iZone < nWingModes; iZone++ )
+        Ampl_Mode[iZone] = 0.0;  
+  }
 
-
-  if (GetGrid_Movement() && Aeroelastic_Simulation) {
+//  if (GetGrid_Movement() && (Aeroelastic_Simulation)) {
+  if (GetGrid_Movement() && (Aeroelastic_Simulation || Aeroelastic_Modal)) {
     Aeroelastic_np1.resize(nMarker_Monitoring);
     Aeroelastic_n.resize(nMarker_Monitoring);
     Aeroelastic_n1.resize(nMarker_Monitoring);
@@ -4208,10 +4343,10 @@ void CConfig::SetPostprocessing(SU2_COMPONENT val_software, unsigned short val_i
       Aeroelastic_n[iMarker].resize(2);
       Aeroelastic_n1[iMarker].resize(2);
       for (int i =0; i<2; i++) {
-        Aeroelastic_np1[iMarker][i].resize(2);
-        Aeroelastic_n[iMarker][i].resize(2);
-        Aeroelastic_n1[iMarker][i].resize(2);
-        for (int j=0; j<2; j++) {
+        Aeroelastic_np1[iMarker][i].resize(nWingModes);
+        Aeroelastic_n[iMarker][i].resize(nWingModes);
+        Aeroelastic_n1[iMarker][i].resize(nWingModes);
+        for (int j=0; j<nWingModes; j++) {
           Aeroelastic_np1[iMarker][i][j] = 0.0;
           Aeroelastic_n[iMarker][i][j] = 0.0;
           Aeroelastic_n1[iMarker][i][j] = 0.0;
@@ -4222,7 +4357,8 @@ void CConfig::SetPostprocessing(SU2_COMPONENT val_software, unsigned short val_i
 
   /*--- Allocate memory for the plunge and pitch and initialized them to zero ---*/
 
-  if (GetGrid_Movement() && Aeroelastic_Simulation) {
+ if (GetGrid_Movement() && (Aeroelastic_Simulation || Aeroelastic_Modal)) {
+ // if (GetGrid_Movement() && (Aeroelastic_Simulation)) {
     Aeroelastic_pitch = new su2double[nMarker_Monitoring];
     Aeroelastic_plunge = new su2double[nMarker_Monitoring];
     for (iMarker = 0; iMarker < nMarker_Monitoring; iMarker++ ) {
@@ -7749,6 +7885,31 @@ CConfig::~CConfig() {
 
   delete[] Aeroelastic_pitch;
   delete[] Aeroelastic_plunge;
+
+  delete [] RefOriginMoment_X_HB;
+  delete [] RefOriginMoment_Y_HB;
+  delete [] RefOriginMoment_Z_HB;
+
+  /*--- Free memory for Harmonic Blance Frequency  pointer ---*/
+
+  delete [] Omega_HB;
+  delete [] Pitch_HB;
+  delete [] Plunge_HB;   
+  delete [] Pitch_rate_HB;
+  delete [] Plunge_rate_HB;   
+ 
+//for (unsigned short iZone = 0; iZone < nWingModes; iZone++) {
+//        delete [] Mod_Disp_HB[iZone];
+//        delete [] Mod_Velo_HB[iZone];
+//}
+//delete [] Mod_Disp_HB;
+//delete [] Mod_Velo_HB;
+
+  delete [] Omega_Aero;
+
+  delete [] Omega_Mode;
+
+  delete [] Ampl_Mode;
 
   /*--- Marker pointers ---*/
 

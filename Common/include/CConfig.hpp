@@ -118,6 +118,8 @@ private:
   Wind_Gust,                /*!< \brief Flag to know if there is a wind gust. */
   Turb_Fixed_Values,        /*!< \brief Flag to know if there are fixed values for turbulence quantities in one half-plane. */
   Aeroelastic_Simulation,   /*!< \brief Flag to know if there is an aeroelastic simulation. */
+  Aeroelastic_Modal,
+  Aeroelastic_Imposed,
   Weakly_Coupled_Heat,      /*!< \brief Flag to know if a heat equation should be weakly coupled to the incompressible solver. */
   Rotating_Frame,           /*!< \brief Flag to know if there is a rotating frame. */
   PoissonSolver,            /*!< \brief Flag to know if we are solving  poisson forces  in plasma solver. */
@@ -163,6 +165,7 @@ private:
   unsigned short *Design_Variable;   /*!< \brief Kind of design variable. */
   unsigned short nTimeInstances;     /*!< \brief Number of periodic time instances for  harmonic balance. */
   su2double HarmonicBalance_Period;  /*!< \brief Period of oscillation to be used with harmonic balance computations. */
+  su2double STR_L2_norm;
   su2double Delta_UnstTime,          /*!< \brief Time step for unsteady computations. */
   Delta_UnstTimeND;                  /*!< \brief Time step for unsteady computations (non dimensional). */
   su2double Delta_DynTime,        /*!< \brief Time step for dynamic structural computations. */
@@ -399,6 +402,7 @@ private:
   unsigned long OuterIter;          /*!< \brief Current Outer iterations for multizone problems. */
   unsigned long InnerIter;          /*!< \brief Current inner iterations for multizone problems. */
   unsigned long TimeIter;           /*!< \brief Current time iterations for multizone problems. */
+  unsigned long AeroIter;
   long Unst_AdjointIter;            /*!< \brief Iteration number to begin the reverse time integration in the direct solver for the unsteady adjoint. */
   long Iter_Avg_Objective;          /*!< \brief Iteration the number of time steps to be averaged, counting from the back */
   su2double PhysicalTime;           /*!< \brief Physical time at the current iteration in the solver for unsteady problems. */
@@ -549,6 +553,9 @@ private:
   FEM_SHOCK_CAPTURING_DG Kind_FEM_Shock_Capturing_DG; /*!< \brief Shock capturing method for the FEM DG solver. */
   BGS_RELAXATION Kind_BGS_RelaxMethod; /*!< \brief Kind of relaxation method for Block Gauss Seidel method in FSI problems. */
   bool ReconstructionGradientRequired; /*!< \brief Enable or disable a second gradient calculation for upwind reconstruction only. */
+  bool Bnd_Velo, HB_Velo;
+  bool HBAero_flag;
+  bool HB_LCO_flag, HB_Flutter_flag;
   bool LeastSquaresRequired;    /*!< \brief Enable or disable memory allocation for least-squares gradient methods. */
   bool Energy_Equation;         /*!< \brief Solve the energy equation for incompressible flows. */
 
@@ -759,6 +766,9 @@ private:
   *RefOriginMoment_X,    /*!< \brief X Origin for moment computation. */
   *RefOriginMoment_Y,    /*!< \brief Y Origin for moment computation. */
   *RefOriginMoment_Z,    /*!< \brief Z Origin for moment computation. */
+  *RefOriginMoment_X_HB,    /*!< \brief X Origin for moment computation. */
+  *RefOriginMoment_Y_HB,    /*!< \brief Y Origin for moment computation. */
+  *RefOriginMoment_Z_HB,    /*!< \brief Z Origin for moment computation. */ 
   *CFL_AdaptParam,       /*!< \brief Information about the CFL ramp. */
   *RelaxFactor_Giles,    /*!< \brief Information about the under relaxation factor for Giles BC. */
   *CFL,                  /*!< \brief CFL number. */
@@ -915,7 +925,8 @@ private:
   Pitching_Ampl[3] = {0.0},           /*!< \brief Pitching amplitude. */
   Pitching_Phase[3] = {0.0},          /*!< \brief Pitching phase offset. */
   Plunging_Omega[3] = {0.0},          /*!< \brief Angular frequency of the mesh plunging. */
-  Plunging_Ampl[3] = {0.0};           /*!< \brief Plunging amplitude. */
+  Plunging_Ampl[3] = {0.0},           /*!< \brief Plunging amplitude. */
+  Plunging_Phase[3] = {0.0};
   su2double *MarkerMotion_Origin, /*!< \brief Mesh motion origin of marker. */
   *MarkerTranslation_Rate,        /*!< \brief Translational velocity of marker. */
   *MarkerRotation_Rate,           /*!< \brief Angular velocity of marker. */
@@ -923,7 +934,8 @@ private:
   *MarkerPitching_Ampl,           /*!< \brief Pitching amplitude of marker. */
   *MarkerPitching_Phase,          /*!< \brief Pitching phase offset of marker. */
   *MarkerPlunging_Omega,          /*!< \brief Angular frequency of marker.. */
-  *MarkerPlunging_Ampl;           /*!< \brief Plunging amplitude of marker. */
+  *MarkerPlunging_Ampl,           /*!< \brief Plunging amplitude of marker. */
+  *MarkerPlunging_Phase;
 
   unsigned short
   nMarkerMotion_Origin,           /*!< \brief Number of values provided for mesh motion origin of marker. */
@@ -934,8 +946,18 @@ private:
   nMarkerPitching_Phase,          /*!< \brief Number of values provided for pitching phase offset of marker. */
   nMarkerPlunging_Omega,          /*!< \brief Number of values provided for angular frequency of marker. */
   nMarkerPlunging_Ampl,           /*!< \brief Number of values provided for plunging amplitude of marker. */
+  nMarkerPlunging_Phase,
   nRough_Wall;                    /*!< \brief Number of rough walls. */
-  su2double  *Omega_HB;           /*!< \brief Frequency for Harmonic Balance Operator (in rad/s). */
+  su2double  *Omega_HB,
+	     *Omega_Aero,
+             *Omega_Mode,
+	     *Ampl_Mode;           /*!< \brief Frequency for Harmonic Balance Operator (in rad/s). */
+  su2double  *Pitch_HB;
+  su2double  *Plunge_HB;
+  su2double  *Pitch_rate_HB;
+  su2double  *Plunge_rate_HB;
+  vector<vector<su2double>> Mod_Velo_HB,
+                            Mod_Disp_HB;
   unsigned short
   nOmega_HB,                      /*!< \brief Number of frequencies in Harmonic Balance Operator. */
   nMoveMotion_Origin,             /*!< \brief Number of motion origins. */
@@ -945,6 +967,10 @@ private:
   Aeroelastic_n1;                 /*!< \brief Aeroelastic solution at time level n-1. */
   su2double FlutterSpeedIndex,    /*!< \brief The flutter speed index. */
   PlungeNaturalFrequency,         /*!< \brief Plunging natural frequency for Aeroelastic. */
+  RootChord,
+  TipChord,
+  WingSpan,
+  WingVol,
   PitchNaturalFrequency,          /*!< \brief Pitch natural frequency for Aeroelastic. */
   AirfoilMassRatio,               /*!< \brief The airfoil mass ratio for Aeroelastic. */
   CG_Location,                    /*!< \brief Center of gravity location for Aeroelastic. */
@@ -952,6 +978,12 @@ private:
   su2double *Aeroelastic_plunge,  /*!< \brief Value of plunging coordinate at the end of an external iteration. */
   *Aeroelastic_pitch;             /*!< \brief Value of pitching coordinate at the end of an external iteration. */
   unsigned short AeroelasticIter; /*!< \brief Solve the aeroelastic equations every given number of internal iterations. */
+  unsigned short nWingModes,
+		 RBF_Method,
+                 nWingDofs;
+  string STR_File;
+  unsigned long nSTRpoints;
+  su2double Scale_Parameter;
   unsigned short Gust_Type,   /*!< \brief Type of Gust. */
   Gust_Dir;                   /*!< \brief Direction of the gust */
   su2double Gust_WaveLength,  /*!< \brief The gust wavelength. */
@@ -1115,12 +1147,15 @@ private:
   bool Time_Domain;              /*!< \brief Determines if the multizone problem is solved in time-domain */
   unsigned long nOuterIter,      /*!< \brief Determines the number of outer iterations in the multizone problem */
   nInnerIter,                    /*!< \brief Determines the number of inner iterations in each multizone block */
+  nAeroIter,
+  nFreqIter,
   nTimeIter,                     /*!< \brief Determines the number of time iterations in the multizone problem */
   nIter,                         /*!< \brief Determines the number of pseudo-time iterations in a single-zone problem */
   Restart_Iter;                  /*!< \brief Determines the restart iteration in the multizone problem */
   su2double Time_Step;           /*!< \brief Determines the time step for the multizone problem */
   su2double Max_Time;            /*!< \brief Determines the maximum time for the time-domain problems */
 
+  su2double PseudoTimeStep;
   unsigned long HistoryWrtFreq[3],    /*!< \brief Array containing history writing frequencies for timer iter, outer iter, inner iter */
                 ScreenWrtFreq[3];     /*!< \brief Array containing screen writing frequencies for timer iter, outer iter, inner iter */
   OUTPUT_TYPE* VolumeOutputFiles;     /*!< \brief File formats to output */
@@ -1456,6 +1491,13 @@ public:
    */
   su2double GetRefOriginMoment_Z(unsigned short val_marker) const { return RefOriginMoment_Z[val_marker]; }
 
+
+  su2double GetRefOriginMoment_X_HB(unsigned short instance) const { return RefOriginMoment_X_HB[instance]; }
+
+  su2double GetRefOriginMoment_Y_HB(unsigned short instance) const { return RefOriginMoment_Y_HB[instance]; }
+
+  su2double GetRefOriginMoment_Z_HB(unsigned short instance) const { return RefOriginMoment_Z_HB[instance]; }
+ 
   /*!
    * \brief Set reference origin x-coordinate for moment computation.
    * \param[in] val_marker - the marker we are monitoring.
@@ -1476,6 +1518,13 @@ public:
    * \param[in] val_origin - New z-coordinate of the mesh motion origin.
    */
   void SetRefOriginMoment_Z(unsigned short val_marker, su2double val_origin) { RefOriginMoment_Z[val_marker] = val_origin; }
+
+
+  void SetRefOriginMoment_X_HB(unsigned short instance, su2double val_origin) { RefOriginMoment_X_HB[instance] = val_origin; }
+
+  void SetRefOriginMoment_Y_HB(unsigned short instance, su2double val_origin) { RefOriginMoment_Y_HB[instance] = val_origin; }
+
+  void SetRefOriginMoment_Z_HB(unsigned short instance, su2double val_origin) { RefOriginMoment_Z_HB[instance] = val_origin; }
 
   /*!
    * \brief Get index of the upper and lower horizontal plane.
@@ -3071,6 +3120,12 @@ public:
    */
   su2double GetHarmonicBalance_Period(void) const { return HarmonicBalance_Period; }
 
+  void SetHarmonicBalance_Period(su2double Period_HB) { HarmonicBalance_Period = Period_HB; }
+
+  void SetStr_L2_norm(su2double val) { STR_L2_norm = val; }
+
+  su2double GetStr_L2_norm(void) const { return STR_L2_norm; }
+
   /*!
    * \brief Set the current external iteration number.
    * \param[in] val_iter - Current external iteration number.
@@ -3100,6 +3155,8 @@ public:
    * \param[in] val_iter - Current time iterationnumber.
    */
   unsigned long GetTimeIter() const { return TimeIter; }
+
+  su2double GetPseudoTimeStep() const { return PseudoTimeStep; }
 
   /*!
    * \brief Get the current internal iteration number.
@@ -5731,6 +5788,15 @@ public:
    */
   su2double GetMach_Motion(void) const { return Mach_Motion; }
 
+  bool GetBnd_Velo(void) const { return Bnd_Velo; }
+
+  bool GetAeroelasticity_HB(void) const { return HBAero_flag; }
+
+  bool HB_LCO(void) const { return HB_LCO_flag; }
+  bool HB_Flutter(void) const { return HB_Flutter_flag; }
+
+  bool GetHB_Velo(void) const { return HB_Velo; }
+
   /*!
    * \brief Get the mesh motion origin.
    * \param[in] iDim - spatial component
@@ -5852,6 +5918,14 @@ public:
    */
   su2double GetPlunging_Omega(unsigned short iDim) const { return Plunging_Omega[iDim];}
 
+  su2double GetPlunging_Phase(unsigned short iDim) const { return Plunging_Phase[iDim];}
+
+  su2double GetAero_Omega(unsigned short iDim) const { return Omega_Aero[iDim];}
+
+  su2double GetMode_Omega(unsigned short iDim) const { return Omega_Mode[iDim];}
+  
+  su2double GetMode_Ampl(unsigned short iDim) const { return Ampl_Mode[iDim];}
+
   /*!
    * \brief Get plunging rate of the marker.
    * \param[in] iMarkerMoving -  Index of the moving marker (as specified in Marker_Moving)
@@ -5859,6 +5933,8 @@ public:
    * \return Angular frequency of the marker plunging.
    */
   su2double GetMarkerPlunging_Omega(unsigned short iMarkerMoving, unsigned short iDim) const { return MarkerPlunging_Omega[3*iMarkerMoving + iDim];}
+
+  su2double GetMarkerPlunging_Phase(unsigned short iMarkerMoving, unsigned short iDim) const { return MarkerPlunging_Phase[3*iMarkerMoving + iDim];}
 
   /*!
    * \brief Get the plunging amplitude of the mesh.
@@ -5893,11 +5969,44 @@ public:
    */
   const su2double* GetOmega_HB(void) const { return  Omega_HB; }
 
+  void SetOmega_HB(su2double omega_value, int instance) {Omega_HB[instance] = omega_value;}
+  
+  void SetOmega_HB(su2double* omega_value) {
+
+	  for (int i=0;i<nOmega_HB;i++)
+		  Omega_HB[i] = omega_value[i];
+  
+  }
+
+  const su2double* GetOmega_Aero(void) const { return  Omega_Aero; }
+ 
   /*!
    * \brief Get if harmonic balance source term is to be preconditioned
    * \return yes or no to harmonic balance preconditioning
    */
   bool GetHB_Precondition(void) const { return HB_Precondition; }
+
+  void SetHB_pitch(su2double value, int instance) {Pitch_HB[instance] = value;}
+ 
+  void SetHB_plunge(su2double value, int instance) {Plunge_HB[instance] = value;}
+ 
+  void SetHB_pitch_rate(su2double value, int instance) {Pitch_rate_HB[instance] = value;}
+ 
+  void SetHB_plunge_rate(su2double value, int instance) {Plunge_rate_HB[instance] = value;}
+
+  void SetHB_Modal_Displacement(su2double val, int instance, int mode) {Mod_Disp_HB[mode][instance] = val;}
+  void SetHB_Modal_Velocities(su2double val, int instance, int mode)   {Mod_Velo_HB[mode][instance] = val;}
+
+  su2double GetHB_Modal_Displacement(int instance, int mode) {return Mod_Disp_HB[mode][instance];}
+  su2double GetHB_Modal_Velocities(int instance, int mode)   {return Mod_Velo_HB[mode][instance];}
+
+  su2double GetHB_pitch(int instance) {return Pitch_HB[instance];}
+ 
+  su2double GetHB_plunge(int instance) {return Plunge_HB[instance];}
+ 
+  su2double GetHB_pitch_rate(int instance) {return Pitch_rate_HB[instance];}
+ 
+  su2double GetHB_plunge_rate(int instance) {return Plunge_rate_HB[instance];}
 
   /*!
    * \brief Get if we should update the motion origin.
@@ -8202,13 +8311,47 @@ public:
    * \brief Aeroelastic Flutter Speed Index.
    */
   su2double GetAeroelastic_Flutter_Speed_Index(void) const { return FlutterSpeedIndex; }
+  
+  void SetAeroelastic_Flutter_Speed_Index(su2double val) {FlutterSpeedIndex = val;}  
 
-  /*!
+  bool GetAeroelastic_Modal(void) const { return Aeroelastic_Modal; }
+
+  bool GetImposed_Modal_Move(void) const { return Aeroelastic_Imposed; }
+
+  unsigned short GetNumber_Modes(void) const { return nWingModes; }
+
+  unsigned short Get_STR_Dofs(void) const { return nWingDofs; }
+
+  unsigned short Get_RBF_method(void) const {return RBF_Method; }
+
+  unsigned long GetNumber_STR_Nodes(void) const { return nSTRpoints; }
+
+  su2double Get_Scaling_Parameter(void) const {return Scale_Parameter; }
+
+  string Get_STR_name(void) const { return STR_File; }
+
+  su2double GetConicalRefVol(void) const { 
+
+            return WingVol;
+            /// return WingSpan*PI_NUMBER/3*(RootChord*RootChord + TipChord*TipChord + TipChord*RootChord)/4; 
+
+  }
+
+  su2double GetRefWing_Length(void) const { 
+
+            return RootChord;
+            /// return WingSpan*PI_NUMBER/3*(RootChord*RootChord + TipChord*TipChord + TipChord*RootChord)/4; 
+
+  }
+
+  su2double GetAeroelastic_Frequency_Torsion(void) const { return Omega_Aero[1]; }
+
+    /*!
    * \brief Uncoupled Aeroelastic Frequency Plunge.
    */
   su2double GetAeroelastic_Frequency_Plunge(void) const { return PlungeNaturalFrequency; }
 
-  /*!
+   /*!
    * \brief Uncoupled Aeroelastic Frequency Pitch.
    */
   su2double GetAeroelastic_Frequency_Pitch(void) const { return PitchNaturalFrequency; }
@@ -9166,6 +9309,10 @@ public:
    * \return Number of inner iterations on each multizone block
    */
   unsigned long GetnInner_Iter(void) const { return nInnerIter; }
+
+  unsigned long GetnAero_Iter(void) const { return nAeroIter; }
+
+  unsigned long GetnFreq_Iter(void) const { return nFreqIter; }
 
   /*!
    * \brief Get the number of outer iterations
