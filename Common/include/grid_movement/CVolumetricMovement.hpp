@@ -278,6 +278,8 @@ public:
    */
   void Rigid_Rotation(CGeometry *geometry, CConfig *config, unsigned short iZone, unsigned long iter);
 
+  void Rigid_Aeroelastic(CGeometry *geometry, CConfig *config, unsigned short iZone, unsigned long iter, su2double* str_solution);
+
   /*!
    * \brief Unsteady pitching grid movement using rigid mesh motion.
    * \param[in] geometry - Geometrical definition of the problem.
