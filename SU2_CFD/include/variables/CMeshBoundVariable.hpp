@@ -36,6 +36,10 @@ private:
 
   MatrixType Boundary_Displacement;  /*!< \brief Store the reference coordinates of the mesh. */
   MatrixType Boundary_Velocity;      /*!< \brief Store the boundary velocities of the mesh. */
+  MatrixType Boundary_Modes_X;  /*!< \brief Store the reference coordinates of the mesh. */
+  MatrixType Boundary_Modes_Y;  /*!< \brief Store the reference coordinates of the mesh. */
+  MatrixType Boundary_Modes_Z;  /*!< \brief Store the reference coordinates of the mesh. */
+
   CVertexMap<unsigned> VertexMap;    /*!< \brief Object that controls accesses to the variables of this class. */
 
 public:
@@ -114,6 +118,47 @@ public:
     if (!VertexMap.GetVertexIndex(iPoint)) return;
     Boundary_Velocity(iPoint,iDim) = val_BoundVel;
   }
+
+
+////////////////////////
+
+  inline su2double GetBound_Mode_X(unsigned long iPoint, unsigned short mode) const override {
+    if (!VertexMap.GetVertexIndex(iPoint)) {  return 0.0;}
+    return Boundary_Modes_X(iPoint,mode);
+  }
+  inline su2double GetBound_Mode_Y(unsigned long iPoint, unsigned short mode) const override {
+    if (!VertexMap.GetVertexIndex(iPoint)) {  return 0.0;}
+    return Boundary_Modes_Y(iPoint,mode);
+  }
+  inline su2double GetBound_Mode_Z(unsigned long iPoint, unsigned short mode) const override {
+    if (!VertexMap.GetVertexIndex(iPoint)) {  return 0.0;}
+    return Boundary_Modes_Z(iPoint,mode);
+  }
+
+  /*!
+   * \brief Set the boundary displacement.
+   * \param[in] iDim - Index of the dimension of interest.
+   * \param[in] val_BoundDisp - Value of the boundary displacements.
+   */
+  inline void SetBound_Mode(unsigned long iPoint, unsigned short mode, const su2double *val_BoundDisp) override {
+    if (!VertexMap.GetVertexIndex(iPoint)) {  return; }
+    Boundary_Modes_X(iPoint,mode) = val_BoundDisp[0];
+    Boundary_Modes_Y(iPoint,mode) = val_BoundDisp[1];
+    if (nDim==3) Boundary_Modes_Z(iPoint,mode) = val_BoundDisp[2];
+  }
+  inline void SetBound_Mode_X(unsigned long iPoint, unsigned short mode, su2double val_BoundDisp) override {
+    if (!VertexMap.GetVertexIndex(iPoint)) {  return; }
+    Boundary_Modes_X(iPoint,mode) = val_BoundDisp; 
+  }
+  inline void SetBound_Mode_Y(unsigned long iPoint, unsigned short mode, su2double val_BoundDisp) override {
+    if (!VertexMap.GetVertexIndex(iPoint)) {  return; }
+    Boundary_Modes_Y(iPoint,mode) = val_BoundDisp; 
+  }
+  inline void SetBound_Mode_Z(unsigned long iPoint, unsigned short mode, su2double val_BoundDisp) override {
+    if (!VertexMap.GetVertexIndex(iPoint)) {  return; }
+    Boundary_Modes_Z(iPoint,mode) = val_BoundDisp; 
+  }
+
 
   /*!
    * \brief Register the boundary displacements of the mesh.

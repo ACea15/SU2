@@ -41,10 +41,17 @@ void CMeshBoundVariable::AllocateBoundaryVariables(CConfig *config) {
 
   unsigned long nBoundPt = VertexMap.Build();
 
+  unsigned short modes = config->GetNumber_Modes();
   /*--- Allocate ---*/
 
   Boundary_Displacement.resize(nBoundPt,nDim) = su2double(0.0);
   if (config->GetTime_Domain()) Boundary_Velocity.resize(nBoundPt,nDim) = su2double(0.0);
+
+  Boundary_Velocity.resize(nBoundPt,nDim) = su2double(0.0);
+
+  Boundary_Modes_X.resize(nBoundPt,modes) = su2double(0.0);
+  Boundary_Modes_Y.resize(nBoundPt,modes) = su2double(0.0);
+  Boundary_Modes_Z.resize(nBoundPt,modes) = su2double(0.0);
 }
 
 void CMeshBoundVariable::Register_BoundDisp() {

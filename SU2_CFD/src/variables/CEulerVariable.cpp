@@ -44,6 +44,8 @@ CEulerVariable::CEulerVariable(su2double density, const su2double *velocity, su2
 
   su2double val_solution[5] = {su2double(1.0), velocity[0], velocity[1], energy, energy};
   if(nDim==3) val_solution[3] = velocity[2];
+  
+  ///cout << "NDIM= " << nDim << " | SOL=[" << val_solution[0] << ", " <<  val_solution[1] << ", " <<  val_solution[2] << ", " <<  val_solution[3] << ", " <<  val_solution[4] << "]." << endl;
 
   for(unsigned long iPoint = 0; iPoint < nPoint; ++iPoint)
     for (unsigned long iVar = 0; iVar < nVar; ++iVar)

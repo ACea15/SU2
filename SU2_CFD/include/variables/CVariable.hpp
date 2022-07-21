@@ -2085,6 +2085,20 @@ public:
    * \param[in] val_BoundVel - Value of the boundary velocity.
    */
   inline virtual void SetBound_Vel(unsigned long iPoint, unsigned long iDim, const su2double val_BoundVel) { }
+  inline virtual su2double GetBound_Mode_X(unsigned long iPoint, unsigned short mode) const { return 0.0; }
+
+  inline virtual su2double GetBound_Mode_Y(unsigned long iPoint, unsigned short mode) const { return 0.0; }
+
+  inline virtual su2double GetBound_Mode_Z(unsigned long iPoint, unsigned short mode) const { return 0.0; }
+
+  inline virtual void SetBound_Mode(unsigned long iPoint, unsigned short mode, const su2double *val_BoundDisp) { }
+
+  inline virtual void SetBound_Mode_X(unsigned long iPoint, unsigned short mode, const su2double val_BoundDisp) { }
+
+  inline virtual void SetBound_Mode_Y(unsigned long iPoint, unsigned short mode, const su2double val_BoundDisp) { }
+
+  inline virtual void SetBound_Mode_Z(unsigned long iPoint, unsigned short mode, const su2double val_BoundDisp) { }
+ 
 
   /*!
    * \brief A virtual member. Get the value of the displacement imposed at the boundary.
