@@ -89,6 +89,13 @@ class CIteration {
   virtual void SetGrid_Movement(CGeometry** geometry, CSurfaceMovement* surface_movement,
                                 CVolumetricMovement* grid_movement, CSolver*** solver, CConfig* config,
                                 unsigned long IntIter, unsigned long TimeIter);
+
+  void SetGrid_AeroelasticMovement(CGeometry** geometry, CSurfaceMovement* surface_movement,
+                                  CVolumetricMovement* grid_movement, CSolver*** solver, CConfig* config,
+                                  unsigned short TimeIter, su2double * str_solution);
+ 
+  void SetAeroelastic_Mesh_Deformation(CGeometry** geometry, CSolver** solver, CNumerics*** numerics, CConfig* config,
+                                  unsigned long IntIter, unsigned long TimeIter);
   /*!
    * \brief Run the mesh deformation algorithms.
    * \author R. Sanchez
@@ -100,6 +107,9 @@ class CIteration {
   void SetMesh_Deformation(CGeometry** geometry, CSolver** solver_container, CNumerics*** numerics_container,
                            CConfig* config_container, RECORDING kind_recording);
 
+  void SetMesh_Deformation_HB(CGeometry** geometry, CSolver** solver_container, CNumerics*** numerics_container,
+                           CConfig* config_container, unsigned long TimeIter, RECORDING kind_recording, bool imp);
+ 
   /*!
    * \brief A virtual member.
    * \param[in] output - Pointer to the COutput class.

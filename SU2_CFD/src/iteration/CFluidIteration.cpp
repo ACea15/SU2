@@ -70,6 +70,7 @@ void CFluidIteration::Iterate(COutput* output, CIntegration**** integration, CGe
   const auto TimeIter = config[val_iZone]->GetTimeIter();
 
   /*--- Update global parameters ---*/
+  config[val_iZone]->SetiInst(val_iInst);
 
   MAIN_SOLVER main_solver = MAIN_SOLVER::NONE;
 
@@ -164,8 +165,13 @@ void CFluidIteration::Iterate(COutput* output, CIntegration**** integration, CGe
   }
 
   /*--- Call Dynamic mesh update if AEROELASTIC motion was specified ---*/
+	  if (config[val_iZone]->GetAeroelastic_Modal() && unsteady) {
 
-  if ((config[val_iZone]->GetGrid_Movement()) && (config[val_iZone]->GetAeroelastic_Simulation()) && unsteady) {
+		  SetAeroelastic_Mesh_Deformation(geometry[val_iZone][val_iInst], solver[val_iZone][val_iInst][MESH_0], numerics[val_iZone][val_iInst][MESH_0], config[val_iZone], InnerIter, TimeIter);
+
+	  }
+          else if ((config[val_iZone]->GetGrid_Movement()) && (config[val_iZone]->GetAeroelastic_Simulation()) && unsteady) {
+
     SetGrid_Movement(geometry[val_iZone][val_iInst], surface_movement[val_iZone], grid_movement[val_iZone][val_iInst],
                      solver[val_iZone][val_iInst], config[val_iZone], InnerIter, TimeIter);
 
@@ -583,7 +589,7 @@ void CFluidIteration::SetDualTime_Aeroelastic(CConfig* config) const {
 
   /*--- Store old aeroelastic solutions ---*/
 
-  if (config->GetGrid_Movement() && config->GetAeroelastic_Simulation()) {
+  if (config->GetGrid_Movement() && (config->GetAeroelastic_Simulation() || config->GetAeroelastic_Modal())) {
 
     config->SetAeroelastic_n1();
     config->SetAeroelastic_n();

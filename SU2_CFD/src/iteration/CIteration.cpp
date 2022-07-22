@@ -148,9 +148,94 @@ void CIteration::SetGrid_Movement(CGeometry** geometry, CSurfaceMovement* surfac
   }
 }
 
+void CIteration::SetGrid_AeroelasticMovement(CGeometry** geometry, CSurfaceMovement* surface_movement,
+                                  CVolumetricMovement* grid_movement, CSolver*** solver, CConfig* config,
+                                  unsigned short TimeIter, su2double * str_solution) {
+
+  unsigned short Kind_Grid_Movement = config->GetKind_GridMovement();
+
+  unsigned short val_iZone = config->GetiZone();
+
+  /*--- Perform mesh movement depending on specified type ---*/
+  switch (Kind_Grid_Movement) {
+    case RIGID_MOTION:
+
+      if (rank == MASTER_NODE) cout << endl << " Performing rigid mesh transformation (Aeroelastic)." << endl;
+
+      /*--- Move each node in the volume mesh using the specified type
+       of rigid mesh motion. These routines also compute analytic grid
+       velocities for the fine mesh. ---*/
+
+      grid_movement->Rigid_Aeroelastic(geometry[MESH_0], config, val_iZone, TimeIter, str_solution);
+      /*--- Update the multigrid structure after moving the finest grid,
+       including computing the grid velocities on the coarser levels. ---*/
+
+      grid_movement->UpdateMultiGrid(geometry, config);
+
+      break;
+
+      /*--- Already initialized in the static mesh movement routine at driver level. ---*/
+    case STEADY_TRANSLATION:
+    case ROTATING_FRAME:
+      break;
+  }
+
+}
+
+void CIteration::SetAeroelastic_Mesh_Deformation(CGeometry** geometry, CSolver** solver, CNumerics*** numerics, CConfig* config,
+                                  unsigned long IntIter, unsigned long TimeIter) {
+
+  unsigned short Kind_Grid_Movement = config->GetKind_GridMovement();
+  bool adjoint = config->GetContinuous_Adjoint();
+
+  unsigned short modes = config->GetNumber_Modes();
+  unsigned short val_iZone = config->GetiZone();
+
+//cout << "GetDeform= " << config->GetDeform_Mesh() << endl;
+//cout << "AeroIter= " << config->GetAeroelasticIter() << endl;
+//cout << "IntIter= " << IntIter << endl;
+
+  if (!config->GetDeform_Mesh()) return;
+  if (IntIter == 0) return;
+
+      /*--- Use the if statement to move the grid only at selected dual time step iterations. ---*/
+    if (IntIter % config->GetAeroelasticIter() == 0) {
+
+      if (rank == MASTER_NODE) cout << endl << " Solving aeroelastic equations and updating surface positions." << endl;
+
+      su2double *Gen_Forces        = new su2double[modes];
+      su2double *Gen_Displacements = new su2double[modes];
+ 
+      /*--- Solve the aeroelastic equations for the new node locations of the moving markers(surfaces) ---*/
+
+//      solver[MESH_0][MESH_SOL]->Calculate_Generalized_Forces(gen_forces, geometry[MESH_0], config)
+
+      solver[MESH_SOL]->Calculate_Generalized_Forces(Gen_Forces, geometry[MESH_0], solver[FLOW_SOL], config, TimeIter);
+
+      solver[FLOW_SOL]->AeroelasticWing(Gen_Displacements, Gen_Forces, geometry[MESH_0], config, TimeIter);
+
+      solver[MESH_SOL]->Calculate_Surface_Displacement(Gen_Displacements, geometry[MESH_0], config, TimeIter);
+
+      /*--- Deform the volume grid around the new boundary locations ---*/
+
+      if (rank == MASTER_NODE) cout << " Deforming the volume grid due to the aeroelastic movement." << endl;
+
+      solver[MESH_SOL]->SetMesh_Stiffness(geometry, numerics[MESH_SOL], config);
+  
+      /*--- Deform the volume grid around the new boundary locations ---*/
+ 
+      solver[MESH_SOL]->DeformMesh(geometry, numerics[MESH_SOL], config);       
+
+      delete [] Gen_Forces;
+      delete [] Gen_Displacements;
+  
+    }
+ 
+}
+
 void CIteration::SetMesh_Deformation(CGeometry** geometry, CSolver** solver, CNumerics*** numerics, CConfig* config,
                                      RECORDING kind_recording) {
-  if (!config->GetDeform_Mesh()) return;
+  if (config->GetAeroelastic_Modal() || !config->GetDeform_Mesh()) return;
 
   /*--- Perform the elasticity mesh movement ---*/
 
@@ -168,6 +253,47 @@ void CIteration::SetMesh_Deformation(CGeometry** geometry, CSolver** solver, CNu
   /*--- Deform the volume grid around the new boundary locations ---*/
 
   solver[MESH_SOL]->DeformMesh(geometry, numerics[MESH_SOL], config);
+
+  /*--- Continue recording. ---*/
+  AD::EndPassive(wasActive);
+}
+
+void CIteration::SetMesh_Deformation_HB(CGeometry** geometry, CSolver** solver, CNumerics*** numerics, CConfig* config,
+                                     unsigned long iter, RECORDING kind_recording, bool imp) {
+  if (!config->GetDeform_Mesh()) return;
+
+  unsigned short modes = config->GetNumber_Modes();
+  /*--- Perform the elasticity mesh movement ---*/
+
+  bool wasActive = false;
+  if ((kind_recording != RECORDING::MESH_DEFORM) && !config->GetMultizone_Problem()) {
+    /*--- In a primal run, AD::TapeActive returns a false ---*/
+    /*--- In any other recordings, the tape is passive during the deformation. ---*/
+    wasActive = AD::BeginPassive();
+  }
+
+  //if (config->GetAeroelastic_Modal() && imp) {
+  if (imp) {
+
+  su2double *Gen_Forces        = new su2double[modes];
+  su2double *Gen_Displacements = new su2double[modes];
+ 
+  solver[FLOW_SOL]->AeroelasticWing(Gen_Displacements, Gen_Forces, geometry[MESH_0], config, iter);
+
+  solver[MESH_SOL]->Calculate_Surface_Displacement(Gen_Displacements, geometry[MESH_0], config, iter);
+
+  delete [] Gen_Forces;
+  delete [] Gen_Displacements;
+ 
+  }
+
+  /*--- Set the stiffness of each element mesh into the mesh numerics ---*/
+
+  solver[MESH_SOL]->SetMesh_Stiffness(geometry, numerics[MESH_SOL], config);
+
+  /*--- Deform the volume grid around the new boundary locations ---*/
+
+  solver[MESH_SOL]->DeformMeshHB(geometry, numerics[MESH_SOL], config, iter);
 
   /*--- Continue recording. ---*/
   AD::EndPassive(wasActive);
