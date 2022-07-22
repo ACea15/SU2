@@ -75,6 +75,13 @@ protected:
   void UpdateGridCoord(CGeometry *geometry, const CConfig *config);
 
   /*!
+   * \brief Update the dual grid after the grid movement (edges and control volumes).
+   * \param[in] geometry - Geometrical definition of the problem.
+   * \param[in] config - Definition of the particular problem.
+   */
+  void UpdateDualGrid(CGeometry *geometry, CConfig *config);
+  
+  /*!
    * \brief Compute the grid velocity form the displacements of the mesh.
    * \param[in] geometry - Geometrical definition of the problem.
    * \param[in] config - Definition of the particular problem.
@@ -88,6 +95,13 @@ protected:
    * \param[in] config - Definition of the particular problem.
    */
   void ComputeGridVelocity_FromBoundary(CGeometry **geometry, CNumerics **numerics, CConfig *config);
+
+   /*!
+   * \brief Update the coarse multigrid levels after the grid movement.
+   * \param[in] geometry - Geometrical definition of the problem.
+   * \param[in] config - Definition of the particular problem.
+   */
+  void UpdateMultiGrid(CGeometry **geometry, CConfig *config) const;
 
   /*!
    * \brief Check the boundary vertex that are going to be moved.
@@ -111,6 +125,10 @@ protected:
    * \param[in] geometry - Geometrical definition of the problem.
    */
   void RestartOldGeometry(CGeometry *geometry, const CConfig *config);
+  
+  void SetBoundaryVelocities(CGeometry *geometry, CNumerics *numerics, CConfig *config);
+
+  void SetBoundaryDisplacementsHB(CGeometry *geometry, CNumerics *numerics, unsigned long iter, CConfig *config);
 
 public:
   /*!
@@ -126,6 +144,14 @@ public:
   void DeformMesh(CGeometry **geometry,
                   CNumerics **numerics,
                   CConfig *config) override;
+
+  void DeformMeshHB(CGeometry **geometry,
+                  CNumerics **numerics,
+                  CConfig *config, unsigned long iter) override;
+
+  void AeroelasticDeformMesh(CGeometry **geometry, CNumerics **numerics, 
+		             CConfig *config, su2double* structural_solution, 
+			     unsigned long iter) override;
 
   /*!
    * \brief Set the stiffness of the mesh.
@@ -202,6 +228,8 @@ public:
    */
   void Surface_Plunging(CGeometry *geometry, CConfig *config, unsigned long iter);
 
+  void Surface_Aeroelastic(CGeometry *geometry, CConfig *config, vector<su2double> &structural_solution, unsigned long iter);
+
   /*!
    * \brief Translating definition for deforming mesh
    * \param[in] geometry - Geometrical definition of the problem.
@@ -209,5 +237,15 @@ public:
    * \param[in] iter - Current time iteration number
    */
   void Surface_Translating(CGeometry *geometry, CConfig *config, unsigned long iter);
+
+  void SetStructuralModes(CGeometry *geometry, CConfig *config);
+
+  void Gauss_Elimination(vector<vector<su2double>> A,vector<su2double> &sol);
+ 
+  su2double RBF_Basis_Function(vector<su2double> x1, vector<su2double> x2, unsigned short method);
+
+  void Calculate_Generalized_Forces(su2double* &gen_forces, CGeometry *geometry, CSolver *flow_solution, CConfig *config, unsigned long TimeIter); 
+
+  void Calculate_Surface_Displacement(su2double* gen_disp, CGeometry *geometry, CConfig *config, unsigned long TimeIter);
 
 };

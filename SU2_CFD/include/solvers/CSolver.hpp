@@ -876,6 +876,11 @@ public:
                                 const CConfig *config,
                                 unsigned short val_marker) { }
 
+  inline virtual void BC_Velocity(CGeometry *geometry,
+                                   CNumerics *numerics,
+                                   const CConfig *config,
+                                   unsigned short val_marker) { }
+
   /*!
    * \brief A virtual member.
    * \param[in] geometry - Geometrical definition of the problem.
@@ -3333,6 +3338,9 @@ public:
                                           CConfig *config,
                                           unsigned long TimeIter) { }
 
+  inline virtual void ReInitSolver(CGeometry *geometry, CConfig *config,
+                           unsigned short iMesh) { }
+
   /*!
    * \brief A virtual member.
    * \param[in] geometry - Geometrical definition of the problem.
@@ -3474,6 +3482,10 @@ public:
                          su2double* rhs,
                          unsigned short nVar);
 
+  void Gauss_Elimination(vector<vector<su2double>>& A,vector<su2double>& sol);
+
+  void Inverse_matrix2D(vector<vector<su2double>> &Phi, vector<vector<su2double>> &Phi_inv);
+
   /*!
    * \brief Prepares and solves the aeroelastic equations.
    * \param[in] surface_movement - Surface movement classes of the problem.
@@ -3486,7 +3498,42 @@ public:
                    CConfig *config,
                    unsigned long TimeIter);
 
-  /*!
+  void Aeroelastic_HB(su2double**& aero_solutions, CGeometry *geometry, 
+                      CConfig *config, su2double* Cl, su2double* Cd, 
+                      su2double* Cm, int harmonics);
+
+  void Aeroelastic_HB(su2double**& aero_solutions, CGeometry *geometry, 
+                      CConfig *config, CSolver ****solver, 
+                      int Instances);
+
+
+//void AeroelasticWing(CSurfaceMovement *surface_movement,
+//                 CGeometry *geometry,
+//                 CConfig *config,
+//                 unsigned long TimeIter);
+
+  void AeroelasticWing(su2double* &structural_solution, 
+		       su2double* gen_forces, 
+		       CGeometry *geometry, CConfig *config, 
+		       unsigned long TimeIter);
+
+  void AeroelasticWing_HB(su2double** &structural_solution, 
+		          su2double** &gen_forces, 
+		          CGeometry *geometry, CConfig *config,
+                          int harmonics);
+
+  inline virtual void Calculate_Surface_Displacement(su2double* gen_disp, 
+		                                     CGeometry *geometry, 
+			                             CConfig *config,
+						     unsigned long TimeIter) { }
+
+  inline virtual void Calculate_Generalized_Forces(su2double*& gen_forces, 
+		                                     CGeometry *geometry, 
+						     CSolver *flow_solution,
+			                             CConfig *config,
+						     unsigned long TimeIter) { }
+
+   /*!
    * \brief Sets up the generalized eigenvectors and eigenvalues needed to solve the aeroelastic equations.
    * \param[in] PHI - Matrix of the generalized eigenvectors.
    * \param[in] w - The eigenvalues of the generalized eigensystem.
@@ -3510,6 +3557,95 @@ public:
                                     CConfig *config,
                                     unsigned short val_Marker,
                                     vector<su2double>& displacements);
+
+  void SolveModalWing(CGeometry *geometry,
+                      CConfig *config,
+                      unsigned short val_Marker,
+                      su2double*& forces,
+                      su2double*& displacements);
+  
+  void SolveModalWing_HB(CGeometry *geometry,
+                         CConfig *config,
+                         unsigned short val_Marker,
+                         su2double**& forces,
+                         su2double**& displacements,
+                         int harmonics); 
+
+  void SolveWing_HB_Unst2D(CGeometry *geometry, CConfig *config, 
+                           unsigned short iMarker, 
+                           vector<vector<su2double>>& displacements, 
+                           vector<su2double> cl, vector<su2double> cd, 
+                           vector<su2double> cm, int harmonics);
+
+    void SolveWing_HB_Thomas(CGeometry *geometry, CConfig *config, 
+		           unsigned short iMarker, 
+			   vector<vector<su2double>>& displacements, 
+			   vector<su2double> cl, vector<su2double> cd, 
+			   vector<su2double> cm, int harmonics);
+
+  void SolveWing_HB_Thomas_Flutter(CGeometry *geometry, CConfig *config, 
+		                      unsigned short iMarker, 
+				      vector<vector<su2double>>& displacements, 
+				      vector<su2double> cl, vector<su2double> cd, 
+				      vector<su2double> cm, int harmonics);
+
+  void SolveWing_HB_Thomas_Velocity(CGeometry *geometry, CConfig *config, 
+		                      unsigned short iMarker, 
+				      vector<vector<su2double>>& displacements, 
+				      vector<su2double> cl, vector<su2double> cd, 
+				      vector<su2double> cm, int harmonics);
+
+  void HB_Operator(CConfig *config, vector<vector<su2double>>& D, 
+                   vector<vector<su2double>>& E, int nInstHB, 
+                   su2double Omega);
+
+  void HB_Operator_Complex(CConfig *config, vector<vector<su2double>>& D, 
+                   vector<vector<su2double>>& E, int nInstHB, 
+                   su2double Omega);
+
+  void Frequency_Velocity_Update_2D(CConfig *config, su2double* lift, 
+                                    su2double* drag, su2double* moment, 
+                                    int harmonics, bool &error_flag);
+
+  void Velocity_Update_2D(CConfig *config, su2double* lift, 
+                          su2double* drag, su2double* moment, 
+                          int harmonics, bool &error_flag);
+
+  void Velocity_Update_2D2(CConfig *config, su2double* lift, 
+                           su2double* drag, su2double* moment, 
+                           int harmonics, bool &error_flag);
+
+  void Velocity_Update_3D(CConfig *config,  
+                          su2double**& gen_forces, 
+                          int harmonics, bool &error_flag);
+
+  void Frequency_Velocity_Update_3D(CConfig *config,  
+                                    su2double**& gen_forces, 
+                                    int harmonics, bool &error_flag);
+
+  void Frequency_Velocity_Update_2D2(CConfig *config, su2double* lift, 
+                                     su2double* drag, su2double* moment, 
+                                     int harmonics, bool &error_flag);
+
+  void Frequency_Velocity_Update_2D4(CConfig *config, su2double* lift, 
+                                     su2double* drag, su2double* moment, 
+                                     int harmonics, bool &error_flag);
+
+  void Frequency_Update_2D(CConfig *config, su2double* lift, 
+                           su2double* drag, su2double* moment, 
+                           int harmonics, bool &error_flag);
+
+  void Frequency_Update_3D(CConfig *config,
+                           su2double**& gen_forces,
+                           int harmonics, bool &error_flag);
+
+  void Frequency_Update_2D2(CConfig *config, su2double* lift, 
+                           su2double* drag, su2double* moment, 
+                           int harmonics, bool &error_flag);
+
+  void Frequency_Update_Phy(CConfig *config, su2double* lift, 
+                            su2double* drag, su2double* moment, 
+                            int harmonics, bool &error_flag);
 
   /*!
    * \brief A virtual member.
@@ -4141,6 +4277,14 @@ public:
   inline virtual void DeformMesh(CGeometry **geometry,
                                  CNumerics **numerics,
                                  CConfig *config) { }
+
+  inline virtual void DeformMeshHB(CGeometry **geometry,
+                                 CNumerics **numerics,
+                                 CConfig *config, unsigned long iter) { }
+
+  inline virtual void AeroelasticDeformMesh(CGeometry **geometry, CNumerics **numerics, 
+		                            CConfig *config, su2double* structural_solution, 
+					    unsigned long iter) {}
 
   /*!
    * \brief A virtual member.

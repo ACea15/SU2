@@ -2290,6 +2290,111 @@ void CSolver::Gauss_Elimination(su2double** A, su2double* rhs, unsigned short nV
 
 }
 
+void CSolver::Gauss_Elimination(vector<vector<su2double>>& A,vector<su2double>& sol) {
+    int n = A.size();
+
+    for (int i=0; i<n; i++) {
+        // Search for maximum in this column
+        su2double maxEl = abs(A[i][i]);
+        int maxRow = i;
+        for (int k=i+1; k<n; k++) {
+            if (abs(A[k][i]) > maxEl) {
+                maxEl = abs(A[k][i]);
+                maxRow = k;
+            }
+        }
+
+        // Swap maximum row with current row (column by column)
+        for (int k=i; k<n+1;k++) {
+            su2double tmp = A[maxRow][k];
+            A[maxRow][k] = A[i][k];
+            A[i][k] = tmp;
+        }
+
+        // Make all rows below this one 0 in current column
+        for (int k=i+1; k<n; k++) {
+            su2double c = -A[k][i]/A[i][i];
+            for (int j=i; j<n+1; j++) {
+                if (i==j) {
+                    A[k][j] = 0;
+                } else {
+                    A[k][j] += c * A[i][j];
+                }
+            }
+        }
+    }
+
+    // Solve equation Ax=b for an upper triangular matrix A
+    //vector<su2double> x(n);
+    for (int i=n-1; i>=0; i--) {
+        sol[i] = A[i][n]/A[i][i];
+        for (int k=i-1;k>=0; k--) {
+            A[k][n] -= A[k][i] * sol[i];
+        }
+    }
+    
+}
+
+void CSolver::Inverse_matrix2D(vector<vector<su2double>> &Phi, vector<vector<su2double>> &Phi_inv){
+
+  vector<vector<su2double>> Phi_sol(2,vector<su2double>(2,0.0));
+  vector<vector<su2double>> Phi_co(2,vector<su2double>(2,0.0));
+  vector<vector<su2double>> subVect(1,vector<su2double>(1,0.0));
+//
+  su2double Det_Phi= Phi[0][0] * Phi[1][1] - Phi[0][1] * Phi[1][0], Det_subVect;
+
+  su2double d = 1.0/Det_Phi; 
+   
+  for(int i = 0; i < 2; i++) {
+        for(int j = 0; j < 2; j++) {
+
+            int p = 0;
+            for(int l = 0; l < 2; l++) {
+                if(l == i) continue;
+             
+                int q = 0;
+
+                for(int m = 0; m < 2; m++) {
+                    if(m == j) continue;
+
+                    subVect[p][q] = Phi[l][m];
+                    q++;
+                }
+                p++;
+            }
+	    Det_subVect = subVect[0][0];
+
+            Phi_co[i][j] = pow(-1, i + j) * Det_subVect;
+        }  
+  }
+  
+  for(int i = 0; i < 2; i++) {
+        for(int j = 0; j < 2; j++) {
+            Phi_sol[j][i] = Phi_co[i][j];
+        }  
+  }
+
+  for(int i = 0; i < 2; i++) {
+        for(int j = 0; j < 2; j++) {
+            Phi_inv[i][j] = Phi_sol[i][j] * d; 
+        }  
+  }
+
+//cout << "Phi" << endl;
+//    for(int j=0;j<2;j++) { 
+//           cout << Phi[j][0] << "  "<< Phi[j][1] << "\n";
+//  }
+//    cout << endl;
+   
+//  cout << "Phi_inverse" << endl;
+//    for(int j=0;j<2;j++) { 
+//           cout << Phi_inv[j][0] << "  "<< Phi_inv[j][1] << "\n";
+//  }
+//    cout << endl;
+  
+//
+}
+
 void CSolver::Aeroelastic(CSurfaceMovement *surface_movement, CGeometry *geometry, CConfig *config, unsigned long TimeIter) {
 
   /*--- Variables used for Aeroelastic case ---*/
@@ -2368,6 +2473,5419 @@ void CSolver::Aeroelastic(CSurfaceMovement *surface_movement, CGeometry *geometr
 
   }
 
+}
+
+
+void CSolver::Aeroelastic_HB(su2double**& aero_solutions, CGeometry *geometry, CConfig *config, CSolver**** flow_solution, int Instances) {
+
+  /*--- Variables used for Aeroelastic case ---*/
+ 
+  su2double Alpha = config->GetAoA()*PI_NUMBER/180.0;
+  const su2double DEG2RAD = PI_NUMBER/180.0;
+  su2double time_new;
+  vector<vector<su2double>> aero_hb_sol(Instances, vector<su2double>(4,0.0));
+  vector<su2double> Cl(Instances,0.0), Cn(Instances,0.0); //contains solution(displacements and rates) of typical section wing model.
+  vector<su2double> Cd(Instances,0.0), Ct(Instances,0.0); //contains solution(displacements and rates) of typical section wing model.
+  vector<su2double> Cm(Instances,0.0); //
+  vector<su2double> Ampl(3,0.0), Omega(3, 0.0);
+
+  unsigned short iMarker, iMarker_Monitoring, Monitoring;
+  string Marker_Tag, Monitoring_Tag;
+
+  if (rank == MASTER_NODE) cout << endl << "-------------------- Aeroelastic HB Displ. Computation --------------------" << endl;
+
+
+    for (int iInst = 0; iInst < Instances; iInst++){
+ 
+      Cl[iInst] = flow_solution[iInst][MESH_0][FLOW_SOL]->GetTotal_CL();
+      Cd[iInst] = flow_solution[iInst][MESH_0][FLOW_SOL]->GetTotal_CD();
+      Cm[iInst] = flow_solution[iInst][MESH_0][FLOW_SOL]->GetTotal_CMz(); 
+
+    }
+   
+    for(int iInst=0;iInst<Instances;iInst++) {
+
+          Cn[iInst] =  Cl[iInst]*cos(Alpha) + Cd[iInst]*sin(Alpha);
+          Ct[iInst] = -Cl[iInst]*sin(Alpha) + Cd[iInst]*cos(Alpha);
+
+    } 
+       
+        su2double period = config->GetHarmonicBalance_Period();
+    	period /= config->GetTime_Ref();
+        su2double TimeInstances = config->GetnTimeInstances();
+        su2double deltaT = period/TimeInstances;
+ 
+  /*--- Loop over markers and find the ones being monitored. ---*/
+ 
+
+  for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
+    Monitoring = config->GetMarker_All_Monitoring(iMarker);
+    if (Monitoring == YES) {
+
+      /*--- Find the particular marker being monitored and get the forces acting on it. ---*/
+
+      for (iMarker_Monitoring = 0; iMarker_Monitoring < config->GetnMarker_Monitoring(); iMarker_Monitoring++) {
+        Monitoring_Tag = config->GetMarker_Monitoring_TagBound(iMarker_Monitoring);
+        Marker_Tag = config->GetMarker_All_TagBound(iMarker);
+        if (Marker_Tag == Monitoring_Tag) {
+
+
+///// for (int iInst=0; iInst<Instances; iInst++) {
+
+/////         time_new = iInst*deltaT;
+
+/////         for (int iDim = 0; iDim < 3; iDim++){
+/////           Omega[iDim] = config->GetPlunging_Omega(iDim)/config->GetOmega_Ref();
+/////           Ampl[iDim]  = config->GetPlunging_Ampl(iDim);             
+/////         }
+
+/////         aero_hb_sol[iInst][0]   =  Ampl[1]*sin(Omega[1]*time_new);
+/////         aero_hb_sol[iInst][2]   =  Omega[1]*Ampl[1]*cos(Omega[1]*time_new);
+
+/////         for (int iDim = 0; iDim < 3; iDim++){
+/////   	Omega[iDim] = config->GetPitching_Omega(iDim)/config->GetOmega_Ref();
+/////           Ampl[iDim]  = config->GetPitching_Ampl(iDim)*DEG2RAD;             
+
+/////        }
+
+/////         aero_hb_sol[iInst][1]   =  Ampl[2]*sin(Omega[2]*time_new);
+/////         aero_hb_sol[iInst][3]   =  Omega[2]*Ampl[2]*cos(Omega[2]*time_new);
+
+///// }
+
+      SolveWing_HB_Unst2D(geometry, config, iMarker_Monitoring, aero_hb_sol, Cn, Ct, Cm, Instances);
+      //
+      //SolveWing_HB_Thomas_Flutter(geometry, config, iMarker_Monitoring, aero_hb_sol, Cn, Ct, Cm, Instances);
+      //
+      //SolveWing_HB_Thomas_Velocity(geometry, config, iMarker_Monitoring, aero_hb_sol, Cn, Ct, Cm, Instances);
+
+      for (int iInst=0; iInst<Instances; iInst++) {
+
+            aero_solutions[iInst][0] = aero_hb_sol[iInst][0];
+            aero_solutions[iInst][1] = aero_hb_sol[iInst][1];
+            aero_solutions[iInst][2] = aero_hb_sol[iInst][2];
+            aero_solutions[iInst][3] = aero_hb_sol[iInst][3];
+        
+      }
+
+
+   }
+
+ 
+   
+   }
+        
+   }
+    
+  }
+}
+
+void CSolver::AeroelasticWing(su2double* &structural_solution, su2double* gen_forces, CGeometry *geometry, CConfig *config, unsigned long TimeIter) {
+
+  /*--- Variables used for Aeroelastic case ---*/
+
+  su2double Alpha = config->GetAoA()*PI_NUMBER/180.0;
+  su2double deltaT = config->GetDelta_UnstTimeND(), time_new, time_old, Cl, Cd;
+  unsigned short modes = config->GetNumber_Modes();
+  vector<su2double> OMEGA(4,0.0), MODE(4,0.0);
+  bool harmonic_balance = (config->GetTime_Marching() == TIME_MARCHING::HARMONIC_BALANCE);
+
+  ///(modes,0.0); //contains solution(displacements and rates) of typical section wing model.
+  ///(modes,0.0); //contains generalized forces
+
+  unsigned short iMarker, iMarker_Monitoring, Monitoring;
+  string Marker_Tag, Monitoring_Tag;
+
+  /*--- Loop over markers and find the ones being monitored. ---*/
+
+  if (harmonic_balance) {
+    /*--- period of oscillation & time interval using nTimeInstances ---*/
+    su2double period = config->GetHarmonicBalance_Period();
+    period /= config->GetTime_Ref();
+    su2double TimeInstances = config->GetnTimeInstances();
+    deltaT = period/TimeInstances;
+  }
+
+  if (TimeIter == 0) {
+
+	  time_new = 0.0;
+          time_old = 0.0; 
+  }
+  else {
+	  time_new = TimeIter*deltaT;
+	  time_old = (TimeIter-1)*deltaT;
+  }
+ 	  
+  if (harmonic_balance) time_old = 0.0;
+
+  for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
+    Monitoring = config->GetMarker_All_Monitoring(iMarker);
+    if (Monitoring == YES) {
+
+      /*--- Find the particular marker being monitored and get the forces acting on it. ---*/
+
+      for (iMarker_Monitoring = 0; iMarker_Monitoring < config->GetnMarker_Monitoring(); iMarker_Monitoring++) {
+        Monitoring_Tag = config->GetMarker_Monitoring_TagBound(iMarker_Monitoring);
+        Marker_Tag = config->GetMarker_All_TagBound(iMarker);
+        if (Marker_Tag == Monitoring_Tag) {          
+
+          /*--- Solve the aeroelastic equations for the particular marker(surface) ---*/
+
+          Cl = GetSurface_CL(iMarker_Monitoring);
+          Cd = GetSurface_CD(iMarker_Monitoring);
+
+          if (rank == MASTER_NODE) cout << "SU2 Calc CL= " << Cl << " | CD= " << Cd << endl;
+         
+		if (!config->GetImposed_Modal_Move() && !harmonic_balance){
+
+		        	
+			SolveModalWing(geometry, config, iMarker_Monitoring, gen_forces, structural_solution);
+
+		}
+		else {
+          
+                	for (unsigned short iDim = 0; iDim < modes; iDim++){
+        
+				MODE[iDim]   = config->GetMode_Ampl(iDim);
+        
+				OMEGA[iDim]  = config->GetMode_Omega(iDim);
+
+				structural_solution[iDim] = MODE[iDim]*(sin(OMEGA[iDim]*time_new) - sin(OMEGA[iDim]*time_old));	
+		  	}
+		
+
+		}
+
+          break;
+
+        }
+      }
+
+      /*--- Compute the new surface node locations ---*/
+      //surface_movement->AeroelasticDeformWing(geometry, config, TimeIter, iMarker, iMarker_Monitoring, structural_solution);
+
+    }
+
+  }
+
+}
+
+void CSolver::AeroelasticWing_HB(su2double** &structural_solution, su2double**& gen_forces, CGeometry *geometry, CConfig *config, int harmonics) {
+
+  /*--- Variables used for Aeroelastic case ---*/
+
+  su2double Alpha = config->GetAoA()*PI_NUMBER/180.0;
+  su2double deltaT, time_new, time_old, Cl, Cd;
+  unsigned short modes = config->GetNumber_Modes();
+  bool harmonic_balance = (config->GetTime_Marching() == TIME_MARCHING::HARMONIC_BALANCE);
+
+  unsigned short iMarker, iMarker_Monitoring, Monitoring;
+  string Marker_Tag, Monitoring_Tag;
+
+  /*--- Loop over markers and find the ones being monitored. ---*/
+
+  if (harmonic_balance) {
+    /*--- period of oscillation & time interval using nTimeInstances ---*/
+    su2double period = config->GetHarmonicBalance_Period();
+    period /= config->GetTime_Ref();
+    su2double TimeInstances = config->GetnTimeInstances();
+    deltaT = period/TimeInstances;
+  }
+
+  for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
+    Monitoring = config->GetMarker_All_Monitoring(iMarker);
+    if (Monitoring == YES) {
+
+      /*--- Find the particular marker being monitored and get the forces acting on it. ---*/
+
+      for (iMarker_Monitoring = 0; iMarker_Monitoring < config->GetnMarker_Monitoring(); iMarker_Monitoring++) {
+        Monitoring_Tag = config->GetMarker_Monitoring_TagBound(iMarker_Monitoring);
+        Marker_Tag = config->GetMarker_All_TagBound(iMarker);
+        if (Marker_Tag == Monitoring_Tag) {          
+
+          /*--- Solve the aeroelastic equations for the particular marker(surface) ---*/
+        	
+		SolveModalWing_HB(geometry, config, iMarker_Monitoring, gen_forces, structural_solution, harmonics);
+
+        }
+      }
+
+      /*--- Compute the new surface node locations ---*/
+      //surface_movement->AeroelasticDeformWing(geometry, config, TimeIter, iMarker, iMarker_Monitoring, structural_solution);
+
+    }
+
+  }
+
+}
+
+void CSolver::SolveWing_HB_Unst2D(CGeometry *geometry, CConfig *config, unsigned short iMarker, vector<vector<su2double>>& displacements, vector<su2double> cl, vector<su2double> cd, vector<su2double> cm, int harmonics) {
+
+  /*--- The aeroelastic model solved in this routine is the typical section wing model
+   The details of the implementation are similar to those found in J.J. Alonso
+   "Fully-Implicit Time-Marching Aeroelastic Solutions" 1994. ---*/
+
+  /*--- Retrieve values from the config file ---*/
+  su2double w_h = config->GetAeroelastic_Frequency_Plunge();
+  su2double w_a = config->GetAeroelastic_Frequency_Pitch();
+  su2double x_a = config->GetAeroelastic_CG_Location();
+  su2double r_a = sqrt(config->GetAeroelastic_Radius_Gyration_Squared());
+  su2double wr  = w_h/w_a;
+  su2double DEG2RAD = PI_NUMBER/180.0;
+  su2double w_alpha = w_a;
+  su2double vf       = config->GetAeroelastic_Flutter_Speed_Index();
+  su2double b        = config->GetLength_Reynolds()/2.0; // airfoil semichord, Reynolds length is by defaul 1.0
+  unsigned long TimeIter = config->GetTimeIter();
+  su2double dtau;
+
+  cout << "xa= " << x_a << ", r2a= " << r_a*r_a << ", wh/wa= " << wr << ", Vf= " << vf << ", b= " << b << endl;
+
+  //su2double dt      = config->GetDelta_UnstTimeND();
+//  dt = dt*w_alpha; //Non-dimensionalize the structural time.
+  //
+  int dofs = 4, NT = harmonics, NH = (NT-1)/2;
+  /*--- Structural Equation damping ---*/
+  vector<su2double> xi(2,0.0);
+
+  /*--- Get simualation period from config file ---*/
+  su2double Period = config->GetHarmonicBalance_Period();
+
+  /*--- Non-dimensionalize the input period, if necessary.      */
+  Period /= config->GetTime_Ref();
+
+  //su2double OmegaHB = 2 * PI_NUMBER / Period;
+  su2double OmegaHB = config->GetOmega_HB()[1];
+  /*--- Eigenvectors and Eigenvalues of the Generalized EigenValue Problem. ---*/
+ vector<vector<su2double>> Kdofs(dofs, vector<su2double>(dofs,0.0));
+
+ // Mass Matrix
+  vector<vector<su2double> > M(2,vector<su2double>(2,0.0));
+  vector<vector<su2double> > M_inv(2,vector<su2double>(2,0.0)); 
+  M[0][0] = 1;
+  M[0][1] = x_a;
+  M[1][0] = x_a;
+  M[1][1] = r_a*r_a;
+
+  Inverse_matrix2D(M, M_inv);
+
+  // Stiffness Matrix
+  vector<vector<su2double> > K(2,vector<su2double>(2,0.0));
+  K[0][0] = (w_h/w_a)*(w_h/w_a);
+  K[0][1] = 0.0;
+  K[1][0] = 0.0;
+  K[1][1] = r_a*r_a;
+
+   // Stiffness Matrix
+  vector<vector<su2double> > T(2,vector<su2double>(2,0.0));
+  T[0][0] = 2*xi[0]*(w_h/w_a)*(w_h/w_a);
+  T[0][1] = 0.0;
+  T[1][0] = 0.0;
+  T[1][1] = 2*xi[1]*r_a*r_a;
+
+  vector<vector<su2double> > AK(2,vector<su2double>(2,0.0));
+  vector<vector<su2double> > AT(2,vector<su2double>(2,0.0));
+ 
+  for (int i=0; i<2; i++) {
+  for (int j=0; j<2; j++) {
+    for (int k=0; k<2; k++) {
+      AK[i][j] += M_inv[i][k]* K[k][j];
+      AT[i][j] += M_inv[i][k]* T[k][j];
+    }  
+  }
+  }
+
+  Kdofs[0][2] = -1.0;
+  Kdofs[1][3] = -1.0;
+
+  Kdofs[2][0] = AK[0][0];
+  Kdofs[2][1] = AK[0][1];
+  Kdofs[3][0] = AK[1][0];
+  Kdofs[3][1] = AK[1][1];
+
+  Kdofs[2][2] = AT[0][0];
+  Kdofs[2][3] = AT[0][1];
+  Kdofs[3][2] = AT[1][0];
+  Kdofs[3][3] = AT[1][1];
+
+  //
+  vector<vector<su2double>> DD(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> EE(NT, vector<su2double>(NT,0.0)); 
+  vector<vector<su2double>> DHB(NT*dofs, vector<su2double>(NT*dofs,0.0));  
+  HB_Operator(config, DD, EE, NT, OmegaHB);
+
+   for (int i=0;i<dofs;i++) {
+   for (int j=0;j<NT;j++)   {
+   for (int k=0;k<NT;k++)   {
+
+        DHB[i*NT+j][i*NT+k] = (DD[j][k]*OmegaHB)/w_alpha;
+   
+   }
+   }
+   }
+
+//
+// transform for dofs
+//
+  int position = 0;
+  vector<vector<su2double>> Q(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  vector<vector<su2double>> Qt(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for (int i=0; i<dofs; i++) {
+	for (int j=0; j<NT; j++) {
+		Q[NT*i+j][position+j*dofs] = 1;
+	}
+	position = position + 1;
+  }
+
+
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      Qt[j][i] = Q[i][j];
+    }
+  }
+
+//  
+  vector<vector<su2double>> AHB(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  vector<vector<su2double>> tmp(NT*dofs,vector<su2double>(NT*dofs,0.0));  
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      for(int k=0;k<NT*dofs;k++) {
+        tmp[i][j] += DHB[i][k] * Q[k][j];
+      }
+    }
+  }
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      for(int k=0;k<NT*dofs;k++) {
+        AHB[i][j] += Qt[i][k] * tmp[k][j];
+      }
+     // AHB[i][j] = ( AHB[i][j] * OmegaHB ) / w_alpha;
+    }
+  } 
+
+  vector<vector<su2double>> KHB(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for(int i=0;i<NT;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  KHB[i*dofs+j][i*dofs+k] = Kdofs[j][k];
+	  }
+	  }
+	
+  }
+
+  /*--- Solving the Decoupled Aeroelastic Problem with second order time discretization Eq (9) ---*/
+
+ /*--- Set up of variables used to solve the structural problem. ---*/
+  
+//  vector<vector<su2double> > A_inv(2,vector<su2double>(2,0.0));
+//  su2double detA;
+//  su2double s1, s2;
+//  vector<su2double> rhs(2,0.0); //right hand side
+ 
+    /*--- Forcing Term ---*/
+  vector<su2double> Force(NT*dofs,0);
+  vector<su2double> Force_old(NT*dofs,0); 
+  su2double cons = vf*vf/PI_NUMBER;
+  vector<su2double> f(2,0.0);
+  vector<su2double> f_tilde(2,0.0);
+  vector<su2double> eta(NT*dofs,0.0);
+  vector<su2double> eta_old(NT*dofs,0.0);
+  vector<su2double> eta_new(NT*dofs,0.0);  
+  vector<vector<su2double>> q(2,vector<su2double>(NT,0.0));
+  vector<vector<su2double>> q_dot(2,vector<su2double>(NT,0.0));
+
+//
+//     
+//
+  cout << "LIFT   /    MOMENT" << endl;
+  for(int count=0;count<NT;count++){
+  
+	  cout << cl[count] << " " << cm[count] << endl;
+
+  f[0] = cons*(-cl[count]);
+  f[1] = cons*(-2*cm[count]);
+
+  //f_tilde = Phi'*f
+  for (int i=0; i<2; i++) {
+    f_tilde[i] = 0;
+    for (int k=0; k<2; k++) {
+      f_tilde[i] += M_inv[i][k]*f[k]; //PHI transpose
+    }
+  }
+
+  Force[count*dofs+2] = f_tilde[0];
+  Force[count*dofs+3] = f_tilde[1];
+
+  }
+	
+//for(int i=0;i<NT*dofs;i++) {
+
+//    eta_old[i] = config->GetHB_displacements(i);
+
+
+//}
+
+  for (int i=0;i<NT;i++){  
+    q[1][i] = config->GetHB_pitch(i);
+    q[0][i] = config->GetHB_plunge(i);
+    q_dot[1][i] = config->GetHB_pitch_rate(i)/w_alpha;
+    q_dot[0][i] = config->GetHB_plunge_rate(i)/b/w_alpha;
+  }
+  int kk = 0;
+  for(int i=0;i<NT*dofs;i+=dofs) {
+
+          eta_old[i+0] = q[0][kk];
+          eta_old[i+1] = q[1][kk];
+
+          eta_old[i+2] = q_dot[0][kk];
+          eta_old[i+3] = q_dot[1][kk];
+
+          kk += 1;
+  }
+
+//for(int i=0;i<NT*dofs;i++) {
+
+//    Force_old[i] = config->GetHB_forces(i);
+
+//}
+
+  vector<vector<su2double> > ASys(NT*dofs,vector<su2double>(NT*dofs+1,0.0));
+  dtau = config->GetPseudoTimeStep(); 
+ 
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+
+         ASys[i][j] = dtau*(AHB[i][j] + KHB[i][j]);
+         if (i==j) ASys[i][i] +=  1.0;
+
+      }      
+  }
+
+  for(int j=0;j<NT*dofs;j++) {
+
+        //ASys[j][NT*dofs] = eta_old[j] +  0.5*dtau*(Force[j] + Force_old[j]);
+        ASys[j][NT*dofs] = eta_old[j] +  dtau*Force[j];
+
+  }
+
+  Gauss_Elimination(ASys, eta);
+
+
+    cout << "eta_old" << endl;
+    for(int j=0;j<NT*dofs;j++) { 
+             cout << eta_old[j] << "\n";
+    }
+    cout << endl;
+
+    cout << "eta" << endl;
+    for(int j=0;j<NT*dofs;j++) { 
+             cout << eta[j] << "\n";
+    }
+    cout << endl;
+
+//for(int i=0;i<NT*dofs;i++) {
+
+//    config->SetHB_forces(Force[i], i);
+
+//}
+//for(int i=0;i<NT*dofs;i++) {
+
+//    config->SetHB_displacements(eta[i], i);
+
+//}
+
+  int k = 0;
+  for(int i=0;i<NT*dofs;i+=dofs) {
+
+	  q[0][k] = eta[i+0];
+	  q[1][k] = eta[i+1];
+
+	  q_dot[0][k] = eta[i+2];
+	  q_dot[1][k] = eta[i+3];
+
+	  k += 1;
+  } 
+ 
+
+  //
+
+    cout << "q" << endl;
+      for(int j=0;j<NT;j++) { 
+             cout << q[0][j] << "  "<< q[1][j] << "\n";
+    }
+      cout << endl;
+ 
+      cout << "q DOT" << endl;
+      for(int j=0;j<NT;j++) { 
+             cout << q_dot[0][j] << "  "<< q_dot[1][j] << "\n";
+    }
+      cout << endl;
+
+
+  // PHASE FIX
+// 
+  vector<su2double> hh(NT,0.0);
+  vector<su2double> ah(NT,0.0);
+  vector<su2double> hhd(NT,0.0);
+  vector<su2double> ahd(NT,0.0);
+
+  cout << "a_hat  |  h_hat" << endl;
+  for(int i=0;i<NT;i++) { 
+  for(int j=0;j<NT;j++) { 
+
+       hh[i] += EE[i][j]*q[0][j];
+       ah[i] += EE[i][j]*q[1][j];
+  
+       hhd[i] += EE[i][j]*q_dot[0][j];
+       ahd[i] += EE[i][j]*q_dot[1][j];
+       
+  }
+  cout << ah[i] << " | "  << hh[i] << "\n";
+
+  }
+  cout << endl;
+
+////////    su2double U0  = hh[0], Cc1 = hh[1], Cs1 = hh[2], Cc2 = hh[3], Cs2 = hh[4];
+            su2double U0  = ah[0], Cc1 = ah[1], Cs1 = ah[2]; ///// Cc2 = ah[3], Cs2 = ah[4];
+
+           // su2double phase = atan2(Cs1,Cc1) - PI_NUMBER/2;
+            su2double magn  = sqrt(Cc1*Cc1 + Cs1*Cs1);
+
+            su2double ratio = config->GetPitching_Ampl(2)*DEG2RAD/magn;
+
+	    cout << "Ratio= " << ratio << endl;
+                
+ //////  hh[0] = 0.0;
+ //////  ah[0] = 0.0;
+ //////  hhd[0] = 0.0;
+ //////  ahd[0] = 0.0;
+ 
+	 if (config->HB_Flutter()) { 
+
+           if (ratio < 1.0) { ah[0] = ah[0]*ratio;
+                             // hh[0] = hh[0]*ratio;
+                              ahd[0] = ahd[0]*ratio;
+                            //  hhd[0] = hhd[0]*ratio; 
+                            }
+         
+     ////ah[0] = 0.0; 
+     ////hh[0] = 0.0;
+     ////ahd[0] = 0.0;
+     ////hhd[0] = 0.0; 
+
+         //ah[0] = 0.0;
+         //ah[1] = ah[1]*ratio;
+         //ah[2] = ah[2]*ratio;
+
+         //if (ratio < 1.0) ahd[0] = ahd[0]*ratio;
+         //ahd[0] = 0.0;
+         //ahd[1] = ahd[1]*ratio;
+         //ahd[2] = ahd[2]*ratio;
+
+         for (int i=1;i<NT;i++) {
+          
+          ah[i]  = ah[i]*ratio;
+          ahd[i] = ahd[i]*ratio;
+       //   hh[i]  = hh[i]*ratio;
+       //   hhd[i] = hhd[i]*ratio; 
+
+         }
+
+//////// if (ratio < 1.0) hh[0] = hh[0]*ratio;
+//////// //hh[0] = 0.0;
+//////// hh[1] = hh[1]*ratio;
+//////// hh[2] = hh[2]*ratio;
+
+         }
+
+  cout << "a_hat  |  h_hat" << endl;
+  for(int i=0;i<NT;i++) { 
+
+      cout << ah[i] << " | "  << hh[i] << "\n";
+
+  }
+  cout << endl;
+
+
+            U0  = ah[0], Cc1 = ah[1], Cs1 = ah[2];
+
+            su2double phase = atan2(Cs1,Cc1) - PI_NUMBER/2;
+    
+            su2double dt_lag = phase/OmegaHB;
+            cout << "phase= " << phase << endl;
+
+            vector<su2double> time_hb(NT,0.0), time_hb2(NT,0.0);
+            for(int i=0;i<NT;i++) {
+
+                    time_hb[i] = i*Period/NT + dt_lag;
+                    //time_hb[i] = i*Period/NT;
+            }
+      
+
+         vector<su2double> h(NT,0.0);
+         vector<su2double> alpha(NT,0.0);
+         vector<su2double> h_dot(NT,0.0);
+         vector<su2double> alpha_dot(NT,0.0);
+
+            for(int i=0;i<NT;i++) {
+
+                    h[i]     = hh[0];
+                    alpha[i] = ah[0];  
+                    h_dot[i] = hhd[0];
+                    alpha_dot[i] = ahd[0];
+
+                    for(int j=0;j<NH;j++) {
+
+                    h[i]     = h[i] + hh[2*j+1]*cos((j+1)*OmegaHB*time_hb[i]) 
+                	            + hh[2*j+2]*sin((j+1)*OmegaHB*time_hb[i]);
+                    alpha[i] = alpha[i] + ah[2*j+1]*cos((j+1)*OmegaHB*time_hb[i])
+                		        + ah[2*j+2]*sin((j+1)*OmegaHB*time_hb[i]);  
+                    h_dot[i] = h_dot[i] + hhd[2*j+1]*cos((j+1)*OmegaHB*time_hb[i]) 
+                	                + hhd[2*j+2]*sin((j+1)*OmegaHB*time_hb[i]);
+                    alpha_dot[i] = alpha_dot[i] + ahd[2*j+1]*cos((j+1)*OmegaHB*time_hb[i]) 
+                	                        + ahd[2*j+2]*sin((j+1)*OmegaHB*time_hb[i]);
+            
+                    }
+
+            }
+
+
+   /*--- Set the solution of the structural equations ---*/
+//if (config->HB_LCO()) { 
+//for (int i=0;i<NT;i++) {
+
+//displacements[i][0] = b*q[0][i];
+//displacements[i][1] = q[1][i];
+//displacements[i][2] = w_alpha*b*q_dot[0][i];
+//displacements[i][3] = w_alpha*q_dot[1][i];
+
+//}
+//}
+//else if (config->HB_Flutter()) {
+  for (int i=0;i<NT;i++) {
+
+  displacements[i][0] = b*h[i];
+  displacements[i][1] = alpha[i];
+  displacements[i][2] = w_alpha*b*h_dot[i];
+  displacements[i][3] = w_alpha*alpha_dot[i];
+
+  }
+//}
+
+  for (int i=0;i<NT;i++){  
+    config->SetHB_pitch(displacements[i][1], i);
+    config->SetHB_plunge(displacements[i][0]/b, i);
+    config->SetHB_pitch_rate(displacements[i][3], i);
+    config->SetHB_plunge_rate(displacements[i][2], i);
+  }
+
+
+}
+
+void CSolver::SolveModalWing_HB(CGeometry *geometry, CConfig *config, unsigned short iMarker, su2double**& gen_forces, su2double**& gen_displacements, int harmonics) {
+
+  /*--- The aeroelastic model solved in this routine is the typical section wing model
+   The details of the implementation are similar to those found in J.J. Alonso
+   "Fully-Implicit Time-Marching Aeroelastic Solutions" 1994. ---*/
+
+  /*--- Retrieve values from the config file ---*/
+  unsigned short modes = config->GetNumber_Modes();
+  vector<su2double> w_modes(modes,0.0); //contains solution(displacements and rates) of typical section wing model.
+
+  su2double vf      = config->GetAeroelastic_Flutter_Speed_Index();
+  su2double b       = config->GetRefWing_Length()/2.0; // root airfoil semichord
+  su2double Vo      = config->GetConicalRefVol();
+  su2double scale_param = 1/config->Get_Scaling_Parameter();
+
+  su2double w_a = config->GetAeroelastic_Frequency_Pitch();
+ 
+  su2double DEG2RAD = PI_NUMBER/180.0;
+  su2double w_alpha = w_a;
+
+  cout << "Solving Wing (HB)" << endl;
+
+  int dofs = 2*modes, NT = harmonics, NH = (NT-1)/2;
+  /*--- Structural Equation damping ---*/
+  vector<su2double> xi(modes,0.0);
+  for (unsigned short i=0;i<modes; i++) {
+
+          w_modes[i] = config->GetAero_Omega(i)/w_a;
+
+  }
+
+  /*--- Get simualation period from config file ---*/
+  su2double Period = config->GetHarmonicBalance_Period();
+
+  /*--- Non-dimensionalize the input period, if necessary.      */
+  Period /= config->GetTime_Ref();
+
+  //su2double OmegaHB = 2 * PI_NUMBER / Period;
+  su2double OmegaHB = config->GetOmega_HB()[1];
+  /*--- Eigenvectors and Eigenvalues of the Generalized EigenValue Problem. ---*/
+  vector<vector<su2double>> AK(dofs, vector<su2double>(dofs,0.0));
+
+  // Stiffness Matrix
+  vector<vector<su2double> > K(modes,vector<su2double>(modes,0.0));
+  for (unsigned short i=0;i<modes; i++) {
+
+          K[i][i] = w_modes[i]*w_modes[i];
+
+  }
+
+   // Stiffness Matrix
+  vector<vector<su2double> > T(modes,vector<su2double>(modes,0.0));
+  for (unsigned short i=0;i<modes; i++) {
+
+          T[i][i] = 2.0*xi[i]*w_modes[i];
+
+  }
+
+  for (unsigned short i=0;i<modes; i++) {
+
+          AK[i][i+modes] = -1.0;
+
+  }
+  for (unsigned short i=0;i<modes; i++) {
+
+          AK[i+modes][i] = K[i][i];
+
+  }
+  for (unsigned short i=0;i<modes; i++) {
+
+          AK[i+modes][i+modes] = T[i][i];
+
+  }
+  //
+  vector<vector<su2double>> DD(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> EE(NT, vector<su2double>(NT,0.0)); 
+  vector<vector<su2double>> DHB(NT*dofs, vector<su2double>(NT*dofs,0.0));  
+  HB_Operator(config, DD, EE, NT, OmegaHB);
+
+   for (int i=0;i<dofs;i++) {
+   for (int j=0;j<NT;j++)   {
+   for (int k=0;k<NT;k++)   {
+
+        DHB[i*NT+j][i*NT+k] = DD[j][k]*(OmegaHB/w_alpha);
+   
+   }
+   }
+   }
+
+//
+// transform for dofs
+//
+  int position = 0;
+  vector<vector<su2double>> Q(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  vector<vector<su2double>> Qt(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for (int i=0; i<dofs; i++) {
+	for (int j=0; j<NT; j++) {
+		Q[NT*i+j][position+j*dofs] = 1;
+	}
+	position = position + 1;
+  }
+
+
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      Qt[j][i] = Q[i][j];
+    }
+  }
+
+//  
+  vector<vector<su2double>> AHB(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  vector<vector<su2double>> tmp(NT*dofs,vector<su2double>(NT*dofs,0.0));  
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      for(int k=0;k<NT*dofs;k++) {
+        tmp[i][j] += DHB[i][k] * Q[k][j];
+      }
+    }
+  }
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      for(int k=0;k<NT*dofs;k++) {
+        AHB[i][j] += Qt[i][k] * tmp[k][j];
+      }
+     // AHB[i][j] = ( AHB[i][j] * OmegaHB ) / w_alpha;
+    }
+  } 
+
+  vector<vector<su2double>> KHB(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for(int i=0;i<NT;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  KHB[i*dofs+j][i*dofs+k] = AK[j][k];
+	  }
+	  }
+	
+  }
+
+  /*--- Solving the Decoupled Aeroelastic Problem with second order time discretization Eq (9) ---*/
+
+ /*--- Set up of variables used to solve the structural problem. ---*/
+  
+    /*--- Forcing Term ---*/
+  vector<su2double> Force(NT*dofs,0);
+  su2double cons = vf*vf*b*b/2.0/Vo;
+  vector<su2double> eta(NT*dofs,0.0);
+  vector<su2double> eta_old(NT*dofs,0.0);
+  vector<su2double> eta_new(NT*dofs,0.0);  
+  vector<vector<su2double>> q(modes,vector<su2double>(NT,0.0));
+  vector<vector<su2double>> q_dot(modes,vector<su2double>(NT,0.0));
+
+//
+  cout << "Calculating Force vector..." << endl; 
+  for(int count=0;count<NT;count++){
+  for (int i=0; i<modes; i++) {
+   
+    Force[count*dofs+modes+i] = (cons * scale_param * gen_forces[count][i]);
+    
+  }
+  }
+
+  cout << "Reading old disp. vector..." << endl;	
+  for (int i=0;i<NT;i++){  
+  for (int j=0;j<modes;j++) {
+    q[j][i]     = config->GetHB_Modal_Displacement(i, j);
+    q_dot[j][i] = config->GetHB_Modal_Velocities(i, j);
+  }
+  }
+
+  int l = 0;
+  for(int i=0;i<NT*dofs;i+=dofs) {
+  for(int j=0;j<modes;j++) {
+
+	  eta_old[i+j] = q[j][l];
+	  eta_old[i+j+modes] = q_dot[j][l];
+  }
+	  l += 1;
+  } 
+//
+  vector<vector<su2double> > ASys(NT*dofs,vector<su2double>(NT*dofs+1,0.0));
+  su2double dtau = config->GetPseudoTimeStep(); 
+
+  cout << "Solving System..." << endl; 
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+
+         ASys[i][j] = dtau*(AHB[i][j] + KHB[i][j]);
+         if (i==j) ASys[i][i] +=  1.0;
+
+      }      
+  }
+
+  for(int j=0;j<NT*dofs;j++) {
+
+        ASys[j][NT*dofs] = eta_old[j] +  dtau*Force[j];
+
+  }
+
+  Gauss_Elimination(ASys, eta);
+
+////cout << "eta_old" << endl;
+////for(int j=0;j<NT*dofs;j++) { 
+////         cout << eta_old[j] << "\n";
+////}
+////cout << endl;
+
+////cout << "eta" << endl;
+////for(int j=0;j<NT*dofs;j++) { 
+////         cout << eta[j] << "\n";
+////}
+////cout << endl;
+
+  l = 0;
+  for(int i=0;i<NT*dofs;i+=dofs) {
+  for(int j=0;j<modes;j++) {
+
+	  q[j][l]     = eta[i+j];
+	  q_dot[j][l] = eta[i+j+modes];
+  }
+	  l += 1;
+  } 
+ 
+
+  //
+
+////cout << "q" << endl;
+////  for(int j=0;j<NT;j++) { 
+////         cout << q[0][j]  << "\n";
+////}
+////  cout << endl;
+
+////  cout << "q DOT" << endl;
+////  for(int j=0;j<NT;j++) { 
+////         cout << q_dot[0][j]  << "\n";
+////}
+////  cout << endl;
+  
+  
+//
+// PHASE FIX
+// 
+  vector<vector<su2double>> qh(modes,vector<su2double>(NT,0.0));
+  vector<vector<su2double>> qhd(modes,vector<su2double>(NT,0.0));
+
+  for(int k=0;k<modes;k++) { 
+  for(int i=0;i<NT;i++) { 
+  for(int j=0;j<NT;j++) { 
+
+       qh[k][i] += EE[i][j]*q[k][j];
+  
+       qhd[k][i] += EE[i][j]*q_dot[k][j];
+       
+  }
+  }
+  }
+
+////////////
+
+            int fixmode = 0;
+            su2double U0  = qh[fixmode][0], Cc1 = qh[fixmode][1], Cs1 = qh[fixmode][2]; ///// Cc2 = ah[3], Cs2 = ah[4];
+
+            su2double magn  = sqrt(Cc1*Cc1 + Cs1*Cs1);
+            su2double ratio = config->GetMode_Ampl(fixmode)/magn;
+
+	    cout << "Ratio= " << ratio << endl;
+            /////if (ratio < 0.9) { ratio = 0.9;}
+ 
+///            U0  = qh[fixmode][0], Cc1 = qh[fixmode][1], Cs1 = qh[fixmode][2];
+
+            su2double phase = atan2(Cs1,Cc1) - PI_NUMBER/2;
+    
+            su2double dt_lag = phase/OmegaHB;
+            cout << "phase= " << phase << endl;
+
+            vector<su2double> time_hb(NT,0.0);
+            for(int i=0;i<NT;i++) {
+
+                    time_hb[i] = i*Period/NT + dt_lag;
+            }
+
+   	    if (config->HB_Flutter()) { 
+
+	    	    //if (ratio < 1.0) { 
+              
+	  		    //qh[fixmode][0]  = qh[fixmode][0]*ratio;      
+		    	    //qhd[fixmode][0] = qhd[fixmode][0]*ratio;
+			    //qh[fixmode][0]  = 0.0;
+			    //qhd[fixmode][0] = 0.0;
+		    //}
+		    for (int i=1;i<NT;i++) {
+          
+			    qh[fixmode][i]  = qh[fixmode][i]*ratio;
+			    qhd[fixmode][i] = qhd[fixmode][i]*ratio;
+		   }
+
+		  //for (int j=0;j<modes;j++) {
+		  //for (int i=1;i<NT;i++) {
+          
+		  //        qh[j][i]  = qh[j][i]*ratio;
+		  //        qhd[j][i] = qhd[j][i]*ratio;
+		  //}
+		  //}
+	    }
+
+
+  cout << "a_hat  |  h_hat" << endl;
+  for(int i=0;i<NT;i++) { 
+
+      cout << qh[0][i] << " | " << "\n";
+
+  }
+  cout << endl;
+ 
+            for(int k=0;k<modes;k++) {
+            for(int i=0;i<NT;i++) {
+
+                    q[k][i]     = qh[k][0];
+                    q_dot[k][i] = qhd[k][0];
+
+                    for(int j=0;j<NH;j++) {
+
+                    q[k][i]     = q[k][i] + qh[k][2*j+1]*cos((j+1)*OmegaHB*time_hb[i]) 
+                	        + qh[k][2*j+2]*sin((j+1)*OmegaHB*time_hb[i]);
+                   
+                    q_dot[k][i] = q_dot[k][i] + qhd[k][2*j+1]*cos((j+1)*OmegaHB*time_hb[i]) 
+                	        + qhd[k][2*j+2]*sin((j+1)*OmegaHB*time_hb[i]);
+          
+                    }
+
+            }
+            }
+
+ /// }
+//cout << "a_hat  |  h_hat" << endl;
+//for(int i=0;i<NT;i++) { 
+
+//    cout << qh[0][i] << " | " << "\n";
+
+//}
+//cout << endl;
+
+//cout << "a  |  h" << endl;
+//for(int i=0;i<NT;i++) { 
+
+//    cout << q[0][i] << " | "  << "\n";
+
+//}
+//cout << endl;
+
+
+   /*--- Set the solution of the structural equations ---*/
+
+  for (int i=0;i<NT;i++) {
+  for (int j=0;j<modes;j++) {
+
+  gen_displacements[i][j] = q[j][i];
+
+  }
+  }
+
+  for (int i=0;i<NT;i++){  
+  for (int j=0;j<modes;j++) {
+     config->SetHB_Modal_Displacement(q[j][i], i, j);
+     config->SetHB_Modal_Velocities(q_dot[j][i], i, j);
+  }
+  }
+
+  for (int i=0;i<NT;i++){  
+    config->SetHB_pitch(q[0][i], i);
+    config->SetHB_plunge(q[1][i], i);
+////config->SetHB_pitch_rate(q[2][i], i);
+////config->SetHB_plunge_rate(q[3][i], i);
+  }
+
+
+}
+
+void CSolver::Frequency_Update_Phy(CConfig *config, su2double* lift, su2double* drag, su2double* moment, int harmonics, bool &error_flag) {
+
+  int NT = harmonics, NH = (NT-1)/2, dofs = 4;
+  vector<su2double> num1(NT*dofs,0);
+  vector<su2double> num2(NT*dofs,0);
+  vector<su2double> Rs(NT*dofs,0);
+  
+  vector<su2double> cl(NT,0);
+  vector<su2double> cd(NT,0); 
+  vector<su2double> cm(NT,0);
+  su2double num = 0.0;
+  su2double den = 0.0;
+   /*--- Retrieve values from the config file ---*/
+  su2double w_h = config->GetAeroelastic_Frequency_Plunge();
+  su2double w_a = config->GetAeroelastic_Frequency_Pitch();
+  su2double x_a = config->GetAeroelastic_CG_Location();
+  su2double r_a = sqrt(config->GetAeroelastic_Radius_Gyration_Squared());
+  su2double wr  = w_h/w_a;
+  su2double w_alpha = w_a;
+//  su2double w_alpha = config->GetAeroelastic_Frequency_Pitch();
+  su2double vf      = config->GetAeroelastic_Flutter_Speed_Index();
+  su2double b       = config->GetLength_Reynolds()/2.0; // airfoil semichord, Reynolds length is by defaul 1.0
+  su2double Alpha   = config->GetAoA()*PI_NUMBER/180.0;
+  unsigned long TimeIter = config->GetTimeIter();
+ 
+  vector<su2double> xi(2,0.0);
+
+//
+  cout << "Updating Frequency" << endl;
+  //
+  vector<vector<su2double>> Kdofs(dofs, vector<su2double>(dofs,0.0));
+// Mass Matrix
+  vector<vector<su2double> > M(2,vector<su2double>(2,0.0));
+  vector<vector<su2double> > M_inv(2,vector<su2double>(2,0.0)); 
+  M[0][0] = 1;
+  M[0][1] = x_a;
+  M[1][0] = x_a;
+  M[1][1] = r_a*r_a;
+
+  Inverse_matrix2D(M, M_inv);
+
+  // Stiffness Matrix
+  vector<vector<su2double> > K(2,vector<su2double>(2,0.0));
+  K[0][0] = (w_h/w_a)*(w_h/w_a);
+  K[0][1] = 0.0;
+  K[1][0] = 0.0;
+  K[1][1] = r_a*r_a;
+
+   // Stiffness Matrix
+  vector<vector<su2double> > T(2,vector<su2double>(2,0.0));
+  T[0][0] = 2*xi[0]*(w_h/w_a)*(w_h/w_a);
+  T[0][1] = 0.0;
+  T[1][0] = 0.0;
+  T[1][1] = 2*xi[1]*r_a*r_a;
+
+  vector<vector<su2double> > AK(2,vector<su2double>(2,0.0));
+  vector<vector<su2double> > AT(2,vector<su2double>(2,0.0));
+ 
+  for (int i=0; i<2; i++) {
+  for (int j=0; j<2; j++) {
+    for (int k=0; k<2; k++) {
+      AK[i][j] += M_inv[i][k]* K[k][j];
+      AT[i][j] += M_inv[i][k]* T[k][j];
+    }  
+  }
+  }
+
+  Kdofs[0][2] = -1.0;
+  Kdofs[1][3] = -1.0;
+
+  Kdofs[2][0] = AK[0][0];
+  Kdofs[2][1] = AK[0][1];
+  Kdofs[3][0] = AK[1][0];
+  Kdofs[3][1] = AK[1][1];
+
+  Kdofs[2][2] = AT[0][0];
+  Kdofs[2][3] = AT[0][1];
+  Kdofs[3][2] = AT[1][0];
+  Kdofs[3][3] = AT[1][1];
+
+  /*--- Get simualation period from config file ---*/
+  su2double Period = config->GetHarmonicBalance_Period();
+
+  /*--- Non-dimensionalize the input period, if necessary.      */
+  Period /= config->GetTime_Ref();
+
+  //su2double OmegaHB = 2 * PI_NUMBER / Period;
+  su2double OmegaHB = config->GetOmega_HB()[1];
+
+  vector<vector<su2double>> DD(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> EE(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> DHB(NT*dofs, vector<su2double>(NT*dofs,0.0));  
+  HB_Operator(config, DD, EE, NT, OmegaHB);
+
+   for (int i=0;i<dofs;i++) {
+   for (int j=0;j<NT;j++)   {
+   for (int k=0;k<NT;k++)   {
+
+        DHB[i*NT+j][i*NT+k] = DD[j][k];
+   
+   }
+   }
+   }
+
+//
+// transform for dofs
+//
+  int position = 0;
+  vector<vector<su2double>> Q(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  vector<vector<su2double>> Qt(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for (int i=0; i<dofs; i++) {
+	for (int j=0; j<NT; j++) {
+		Q[NT*i+j][position+j*dofs] = 1;
+	}
+	position = position + 1;
+  }
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      Qt[j][i] = Q[i][j];
+    }
+  }
+//  
+  vector<vector<su2double>> DM(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  vector<vector<su2double>> tmp(NT*dofs,vector<su2double>(NT*dofs,0.0));  
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      for(int k=0;k<NT*dofs;k++) {
+        tmp[i][j] += DHB[i][k] * Q[k][j];
+      }
+    }
+  }
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      for(int k=0;k<NT*dofs;k++) {
+        DM[i][j] += Qt[i][k] * tmp[k][j];
+      }
+      //DM[i][j] = DM[i][j] ;
+    }
+  } 
+
+  vector<vector<su2double>> KHB(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for(int i=0;i<NT;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  KHB[i*dofs+j][i*dofs+k] = Kdofs[j][k];
+	  }
+	  }
+	
+  }  
+  
+  vector<su2double> Force(NT*dofs,0);
+ 
+  su2double cons = vf*vf/PI_NUMBER;
+  vector<su2double> f(2,0.0);
+  vector<su2double> f_tilde(2,0.0);
+  vector<su2double> eta(NT*dofs,0.0);
+
+  vector<vector<su2double>> q(2,vector<su2double>(NT,0.0));
+  vector<vector<su2double>> q_dot(2,vector<su2double>(NT,0.0));
+//  vector<vector<su2double>> theta(2,vector<su2double>(NT,0.0));
+//  vector<vector<su2double>> theta_dot(2,vector<su2double>(NT,0.0)); 
+
+  for (int i=0;i<NT;i++){  
+    q[1][i] = config->GetHB_pitch(i);
+    q[0][i] = config->GetHB_plunge(i);
+    q_dot[1][i] = config->GetHB_pitch_rate(i)/w_alpha;
+    q_dot[0][i] = config->GetHB_plunge_rate(i)/b/w_alpha;
+  }
+
+  int k = 0;
+  for(int i=0;i<NT*dofs;i+=dofs) {
+
+          eta[i+0] = q[0][k];
+          eta[i+1] = q[1][k];
+
+          eta[i+2] = q_dot[0][k];
+          eta[i+3] = q_dot[1][k];
+
+          k += 1;
+  }
+  cout << "ETA" << endl;
+  for (int i=0;i<NT*dofs;i++) {
+          cout << eta[i] << endl;
+  }
+  cout << endl;
+
+
+//for(int i=0;i<NT*dofs;i++) {
+
+//      eta[i] = config->GetHB_displacements(i);
+
+//}
+//
+//  if (TimeIter % 5 == 0){
+//for(int i=0;i<NT*dofs;i++) {
+
+//    config->SetHB_displacements(eta[i], i);
+
+//}
+//  }
+  //
+  for(int i=0;i<harmonics;i++) {
+
+          cl[i] = lift[i]*cos(Alpha) + drag[i]*sin(Alpha);
+          cd[i] = -lift[i]*sin(Alpha) + drag[i]*cos(Alpha);
+        
+          cm[i] = moment[i];
+
+               cout << "Lift= " << cl[i] << " Moment= " << cm[i] << "\n" << endl; 
+  }
+
+//for(int i=0;i<NT*dofs;i++) {
+
+//    Force[i] = config->GetHB_forces(i);
+
+//}
+
+  for(int count=0;count<NT;count++){
+
+  f[0] = cons*(-cl[count]);
+  f[1] = cons*(2*-cm[count]);
+
+  //f_tilde = Phi'*f
+  for (int i=0; i<2; i++) {
+    f_tilde[i] = 0;
+    for (int k=0; k<2; k++) {
+      f_tilde[i] += M_inv[i][k]*f[k]; //PHI transpose
+    }
+  }
+
+  Force[count*dofs+2] = f_tilde[0];
+  Force[count*dofs+3] = f_tilde[1];
+
+  }
+  //
+//for (int i=0;i<NT*dofs;i++) {
+//for (int j=0;j<NT*dofs;j++) {
+
+//        DM[i][j] = AHB[i][j]/OmegaHB;
+
+//}
+//}
+  su2double L2norm = 0.0;
+  num = 0.0;
+  den = 0.0;
+  for (int i=0;i<NT*dofs;i++) {
+	  
+	 num1[i] = -Force[i];
+         Rs[i]   = -Force[i];
+         num2[i] = 0.0;
+
+  for (int j=0;j<NT*dofs;j++) {
+
+	 Rs[i]   += (OmegaHB / w_a * DM[i][j] + KHB[i][j])*eta[j];
+	 num1[i] += KHB[i][j] * eta[j]; 
+	 num2[i] += DM[i][j] * eta[j];
+
+  }
+
+  num -= (num1[i] * num2[i]);
+  den += (num2[i] * num2[i]); 
+
+  L2norm += 0.5*(Rs[i]*Rs[i]); 
+
+  } 
+
+  //su2double OmegaHBnew = num/den;
+  su2double OmegaHBcheck = num/den;
+  su2double OmegaHBnew = w_a*OmegaHBcheck;
+  su2double PeriodHBnew = 2*PI_NUMBER/OmegaHBnew;
+  su2double error_value = (OmegaHBnew - OmegaHB)/OmegaHB;
+
+
+  cout << "New HB Omega = " << (OmegaHBcheck) << " / L2NORM = " << L2norm << endl;
+  cout << "Error in omega calc = " << error_value << endl;
+
+  if ((abs(error_value) < 0.0000001 || OmegaHBnew < 0.001)&&(abs(L2norm) < 0.00000000000001)) {error_flag = true;} 
+
+  config->SetHarmonicBalance_Period(PeriodHBnew);
+  config->SetStr_L2_norm(L2norm);
+
+  config->SetOmega_HB(0.0, 0);
+  for (int i=1;i<NH+1;i++)  
+    config->SetOmega_HB(i*OmegaHBnew, i);
+
+  for (int i=1;i<NH+1;i++)  
+    config->SetOmega_HB(-i*OmegaHBnew, NH + i);
+
+}
+
+void CSolver::Frequency_Update_2D(CConfig *config, su2double* lift, su2double* drag, su2double* moment, int harmonics, bool &error_flag) {
+
+  int NT = harmonics, NH = (NT-1)/2, dofs = 2;
+  vector<su2double> num1(NT*dofs,0);
+  vector<su2double> num2(NT*dofs,0);
+  vector<su2double> Rs(NT*dofs,0);
+  
+  vector<su2double> cl(NT,0);
+  vector<su2double> cd(NT,0); 
+  vector<su2double> cm(NT,0);
+  su2double num = 0.0;
+  su2double den = 0.0;
+   /*--- Retrieve values from the config file ---*/
+  su2double w_h = config->GetAeroelastic_Frequency_Plunge();
+  su2double w_a = config->GetAeroelastic_Frequency_Pitch();
+  su2double x_a = config->GetAeroelastic_CG_Location();
+  su2double r_a = sqrt(config->GetAeroelastic_Radius_Gyration_Squared());
+  su2double wr  = w_h/w_a;
+  su2double w_alpha = w_a;
+//  su2double w_alpha = config->GetAeroelastic_Frequency_Pitch();
+  su2double vf      = config->GetAeroelastic_Flutter_Speed_Index();
+  su2double b       = config->GetLength_Reynolds()/2.0; // airfoil semichord, Reynolds length is by defaul 1.0
+  su2double Alpha   = config->GetAoA()*PI_NUMBER/180.0;
+  unsigned long TimeIter = config->GetTimeIter();
+ 
+  vector<su2double> xi(2,0.0);
+
+//
+  cout << "Updating Frequency" << endl;
+  //
+ // vector<vector<su2double>> Kdofs(dofs, vector<su2double>(dofs,0.0));
+// Mass Matrix
+  vector<vector<su2double> > M(2,vector<su2double>(2,0.0));
+  vector<vector<su2double> > M_inv(2,vector<su2double>(2,0.0)); 
+  M[0][0] = 1;
+  M[0][1] = x_a;
+  M[1][0] = x_a;
+  M[1][1] = r_a*r_a;
+
+  Inverse_matrix2D(M, M_inv);
+
+  // Stiffness Matrix
+  vector<vector<su2double> > K(2,vector<su2double>(2,0.0));
+  K[0][0] = (w_h/w_a)*(w_h/w_a);
+  K[0][1] = 0.0;
+  K[1][0] = 0.0;
+  K[1][1] = r_a*r_a;
+
+   // Stiffness Matrix
+  vector<vector<su2double> > T(2,vector<su2double>(2,0.0));
+  T[0][0] = 2*xi[0]*(w_h/w_a)*(w_h/w_a);
+  T[0][1] = 0.0;
+  T[1][0] = 0.0;
+  T[1][1] = 2*xi[1]*r_a*r_a;
+
+  vector<vector<su2double> > AK(2,vector<su2double>(2,0.0));
+  vector<vector<su2double> > AT(2,vector<su2double>(2,0.0));
+ 
+  for (int i=0; i<2; i++) {
+  for (int j=0; j<2; j++) {
+    for (int k=0; k<2; k++) {
+      AK[i][j] += M_inv[i][k]* K[k][j];
+      AT[i][j] += M_inv[i][k]* T[k][j];
+    }  
+  }
+  }
+
+  /*--- Get simualation period from config file ---*/
+  su2double Period = config->GetHarmonicBalance_Period();
+
+  /*--- Non-dimensionalize the input period, if necessary.      */
+  Period /= config->GetTime_Ref();
+
+  //su2double OmegaHB = 2 * PI_NUMBER / Period;
+  su2double OmegaHB = config->GetOmega_HB()[1];
+  //su2double OmegaHB_old = config->GetHB_frequency_old();
+
+  vector<vector<su2double>> DD(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> EE(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> DHB(NT*dofs, vector<su2double>(NT*dofs,0.0));  
+  HB_Operator(config, DD, EE, NT, OmegaHB);
+
+   for (int i=0;i<dofs;i++) {
+   for (int j=0;j<NT;j++)   {
+   for (int k=0;k<NT;k++)   {
+
+        DHB[i*NT+j][i*NT+k] = DD[j][k];
+   
+   }
+   }
+   }
+
+//
+// transform for dofs
+//
+  int position = 0;
+  vector<vector<su2double>> Q(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  vector<vector<su2double>> Qt(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for (int i=0; i<dofs; i++) {
+	for (int j=0; j<NT; j++) {
+		Q[NT*i+j][position+j*dofs] = 1;
+	}
+	position = position + 1;
+  }
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      Qt[j][i] = Q[i][j];
+    }
+  }
+//  
+  vector<vector<su2double>> DM(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  vector<vector<su2double>> DM2(NT*dofs,vector<su2double>(NT*dofs,0.0)); 
+  vector<vector<su2double>> tmp(NT*dofs,vector<su2double>(NT*dofs,0.0));  
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      for(int k=0;k<NT*dofs;k++) {
+        tmp[i][j] += DHB[i][k] * Q[k][j];
+      }
+    }
+  }
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      for(int k=0;k<NT*dofs;k++) {
+        DM[i][j] += Qt[i][k] * tmp[k][j];
+      }
+      //DM[i][j] = DM[i][j] ;
+    }
+  } 
+
+  for(int i=0;i<NT*dofs;i++) {
+      for(int j=0;j<NT*dofs;j++) {
+	  for(int k=0;k<NT*dofs;k++) {
+             DM2[i][j] += DM[i][k] * DM[k][j];
+	  }
+      }
+     // AHB[i][j] = ( AHB[i][j] * OmegaHB ) / w_alpha;
+    }
+
+
+  vector<vector<su2double>> KHB(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for(int i=0;i<NT;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  KHB[i*dofs+j][i*dofs+k] = AK[j][k];
+	  }
+	  }
+	
+  }  
+  
+  vector<su2double> Force(NT*dofs,0);
+  su2double cons = vf*vf/PI_NUMBER;
+  vector<su2double> f(2,0.0);
+  vector<su2double> f_tilde(2,0.0);
+  vector<su2double> eta(NT*dofs,0.0);
+
+  vector<vector<su2double>> q(2,vector<su2double>(NT,0.0));
+//  vector<vector<su2double>> q_dot(2,vector<su2double>(NT,0.0));
+//  vector<vector<su2double>> theta(2,vector<su2double>(NT,0.0));
+//  vector<vector<su2double>> theta_dot(2,vector<su2double>(NT,0.0)); 
+
+  for (int i=0;i<NT;i++){  
+    q[1][i] = config->GetHB_pitch(i);
+    q[0][i] = config->GetHB_plunge(i);
+ }
+
+  int k = 0;
+  for(int i=0;i<NT*dofs;i+=dofs) {
+
+          eta[i+0] = q[0][k];
+          eta[i+1] = q[1][k];
+
+          k += 1;
+  }
+
+//for(int i=0;i<NT*dofs;i++) {
+
+//    eta[i] = config->GetHB_displacements(i);
+
+//}
+
+  cout << "ETA" << endl;
+  for (int i=0;i<NT*dofs;i++) {
+          cout << eta[i] << endl;
+  }
+  cout << endl;
+
+  for(int i=0;i<harmonics;i++) {
+
+          cl[i] = lift[i]*cos(Alpha) + drag[i]*sin(Alpha);
+          cd[i] = -lift[i]*sin(Alpha) + drag[i]*cos(Alpha);
+        
+          cm[i] = moment[i];
+
+               cout << "Lift= " << cl[i] << " Moment= " << cm[i] << "\n" << endl; 
+  }
+
+//for(int i=0;i<NT*dofs;i++) {
+
+//    Force[i] = config->GetHB_forces(i);
+
+//}
+
+  for(int count=0;count<NT;count++){
+
+  f[0] = (-cl[count]);
+  f[1] = (2*-cm[count]);
+
+  //f_tilde = Phi'*f
+  for (int i=0; i<2; i++) {
+    f_tilde[i] = 0;
+    for (int k=0; k<2; k++) {
+      f_tilde[i] += M_inv[i][k]*f[k]; //PHI transpose
+    }
+  }
+
+  Force[count*dofs+0] = f_tilde[0];
+  Force[count*dofs+1] = f_tilde[1];
+
+  }
+//
+//////////////////////////////////////////////////////////////////////////
+//
+  su2double FlutterSpeed;
+  su2double FS2;
+  su2double L2norm;
+
+  su2double vf_old = vf;
+  su2double OmegaHBcheck = OmegaHB*OmegaHB/w_a /w_a;
+  su2double OmegaHBnew;
+  su2double PeriodHBnew;
+  su2double error_value;
+
+
+  cons = vf*vf/PI_NUMBER;
+  L2norm = 0.0;
+  num = 0.0;
+  den = 0.0;
+  for (int i=0;i<NT*dofs;i++) {
+          
+         num1[i] = -cons*Force[i];
+         Rs[i]   = -cons*Force[i];
+         num2[i] = 0.0;
+
+  for (int j=0;j<NT*dofs;j++) {
+
+         Rs[i]   += ((OmegaHBcheck * DM2[i][j] + KHB[i][j])*eta[j]);
+         num1[i] += (KHB[i][j] * eta[j]); 
+         num2[i] += (DM2[i][j] * eta[j]);
+
+  }
+
+  num += (num1[i] * num2[i]);
+  den += (num2[i] * num2[i]); 
+
+  L2norm += (0.5*(Rs[i]*Rs[i])); 
+
+  } 
+
+  OmegaHBcheck = -num/den;
+  OmegaHBnew   = w_a*sqrt(OmegaHBcheck);
+  error_value  = (OmegaHBnew - OmegaHB)/OmegaHB;
+
+  if (OmegaHBcheck <= 0.0) { cout << "Neg. Frequency" << endl; OmegaHBnew = OmegaHB; };
+
+  OmegaHBnew = OmegaHB + 0.3*(OmegaHBnew - OmegaHB);
+  PeriodHBnew  = 2*PI_NUMBER/OmegaHBnew;
+  
+//  OmegaHBnew = OmegaHB + (OmegaHBnew - OmegaHB);
+  //OmegaHBnew = 65; 
+////////////////////////////////////////////////////////////////////
+//
+  cout << "New HB Omega = " << (OmegaHBnew) << " / L2NORM = " << L2norm  << endl;
+  cout << "Error in omega calc = " << error_value << endl;
+
+  //config->SetAeroelastic_Flutter_Speed_Index(FlutterSpeed);
+ 
+  if ((abs(error_value) < 0.0000001 || OmegaHBnew < 0.001)&&(abs(L2norm) < 0.00000000000001)) {error_flag = true;} 
+
+  config->SetHarmonicBalance_Period(PeriodHBnew);
+  config->SetStr_L2_norm(L2norm);
+
+  config->SetOmega_HB(0.0, 0);
+  for (int i=1;i<NH+1;i++)  
+    config->SetOmega_HB(i*OmegaHBnew, i);
+
+  for (int i=1;i<NH+1;i++)  
+    config->SetOmega_HB(-i*OmegaHBnew, NH + i);
+
+}
+
+void CSolver::Frequency_Update_3D(CConfig *config, su2double**& gen_forces, int harmonics, bool &error_flag) {
+
+ 
+  /*--- Retrieve values from the config file ---*/
+  unsigned short modes = config->GetNumber_Modes();
+  vector<su2double> w_modes(modes,0.02); //contains solution(displacements and rates) of typical section wing model.
+
+  su2double vf      = config->GetAeroelastic_Flutter_Speed_Index();
+  su2double b       = config->GetRefWing_Length()/2.0; // root airfoil semichord
+  su2double Vo      = config->GetConicalRefVol();
+  su2double scale_param = 1/config->Get_Scaling_Parameter();
+
+  su2double OmegaHB_new, PeriodHB_new;
+  su2double L2norm;
+  su2double w_a = config->GetAeroelastic_Frequency_Pitch();
+ 
+  su2double DEG2RAD = PI_NUMBER/180.0;
+  su2double w_alpha = w_a;
+
+  int dofs = modes, NT = harmonics, NH = (NT-1)/2;
+  /*--- Structural Equation damping ---*/
+  vector<su2double> xi(modes,0.02);
+  for (unsigned short i=0;i<modes; i++) {
+
+          w_modes[i] = config->GetAero_Omega(i)/w_a;
+
+  }
+
+  su2double num = 0.0;
+  su2double den = 0.0;
+
+  if (rank == MASTER_NODE)
+  { 
+  cout << "Updating Frequency (3D)" << endl;
+  //
+ // vector<vector<su2double>> Kdofs(dofs, vector<su2double>(dofs,0.0));
+  vector<vector<su2double> > K(modes,vector<su2double>(modes,0.0));
+  for (unsigned short i=0;i<modes; i++) {
+
+          K[i][i] = w_modes[i]*w_modes[i];
+
+  }
+
+   // Stiffness Matrix
+  vector<vector<su2double> > T(modes,vector<su2double>(modes,0.0));
+  for (unsigned short i=0;i<modes; i++) {
+
+          T[i][i] = 2.0*xi[i]*w_modes[i];
+
+  }
+
+  /*--- Get simualation period from config file ---*/
+  su2double Period = config->GetHarmonicBalance_Period();
+
+  /*--- Non-dimensionalize the input period, if necessary.      */
+  Period /= config->GetTime_Ref();
+
+  //su2double OmegaHB = 2 * PI_NUMBER / Period;
+  su2double OmegaHB = config->GetOmega_HB()[1];
+  //su2double OmegaHB_old = config->GetHB_frequency_old();
+
+  vector<vector<su2double>> DD(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> EE(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> DHB(NT*dofs, vector<su2double>(NT*dofs,0.0));  
+  HB_Operator(config, DD, EE, NT, OmegaHB);
+
+   for (int i=0;i<dofs;i++) {
+   for (int j=0;j<NT;j++)   {
+   for (int k=0;k<NT;k++)   {
+
+        DHB[i*NT+j][i*NT+k] = DD[j][k];
+   
+   }
+   }
+   }
+
+//
+// transform for dofs
+//
+  int position = 0;
+  vector<vector<su2double>> Q(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  vector<vector<su2double>> Qt(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for (int i=0; i<dofs; i++) {
+	for (int j=0; j<NT; j++) {
+		Q[NT*i+j][position+j*dofs] = 1;
+	}
+	position = position + 1;
+  }
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      Qt[j][i] = Q[i][j];
+    }
+  }
+//  
+  vector<vector<su2double>> DM(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  vector<vector<su2double>> DT(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  vector<vector<su2double>> DM2(NT*dofs,vector<su2double>(NT*dofs,0.0)); 
+  vector<vector<su2double>> tmp(NT*dofs,vector<su2double>(NT*dofs,0.0));  
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      for(int k=0;k<NT*dofs;k++) {
+        tmp[i][j] += DHB[i][k] * Q[k][j];
+      }
+    }
+  }
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      for(int k=0;k<NT*dofs;k++) {
+        DM[i][j] += Qt[i][k] * tmp[k][j];
+      }
+      //DM[i][j] = DM[i][j] ;
+    }
+  } 
+
+  for(int i=0;i<NT*dofs;i++) {
+      for(int j=0;j<NT*dofs;j++) {
+	  for(int k=0;k<NT*dofs;k++) {
+             DM2[i][j] += DM[i][k] * DM[k][j];
+	  }
+      }
+     // AHB[i][j] = ( AHB[i][j] * OmegaHB ) / w_alpha;
+  }
+
+  vector<vector<su2double>> KHB(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for(int i=0;i<NT;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  KHB[i*dofs+j][i*dofs+k] = K[j][k];
+	  }
+	  }
+	
+  }  
+  vector<vector<su2double>> THB(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for(int i=0;i<NT;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  THB[i*dofs+j][i*dofs+k] = T[j][k];
+	  }
+	  }
+	
+  }  
+    for(int i=0;i<NT*dofs;i++) {
+      for(int j=0;j<NT*dofs;j++) {
+	  for(int k=0;k<NT*dofs;k++) {
+             DT[i][j] += THB[i][k] * DM[k][j];
+	  }
+      }
+  }
+
+
+  vector<su2double> Force(NT*dofs,0);
+  su2double cons = vf*vf*b*b/2.0/Vo;
+  vector<su2double> eta(NT*dofs,0.0);
+  vector<vector<su2double>> q(modes,vector<su2double>(NT,0.0));
+// 
+  cout << "Computing Forces..." << endl;
+  for(int count=0;count<NT;count++){
+  for (int i=0; i<modes; i++) {
+   
+    Force[count*dofs+i] = (cons * scale_param *gen_forces[count][i]);
+    
+  }
+  }
+	
+  for (int i=0;i<NT;i++){  
+  for (int j=0;j<modes;j++) {
+    q[j][i]     = config->GetHB_Modal_Displacement(i, j);
+  }
+  }  
+
+  int l = 0;
+  for(int i=0;i<NT*dofs;i+=dofs) {
+  for(int j=0;j<modes;j++) {
+
+	  eta[i+j] = q[j][l];
+  }
+	  l += 1;
+  }
+//
+
+  cout << "ETA" << endl;
+  for (int i=0;i<NT*dofs;i++) {
+          cout << eta[i] << endl;
+  }
+  cout << endl;
+ 
+//////////////////////////////////////////////////////////////////////////
+
+  su2double Omega  = OmegaHB/w_a;
+  su2double Omega2 = OmegaHB*OmegaHB/w_a/w_a;
+  su2double Omega3 = OmegaHB*OmegaHB*OmegaHB/w_a/w_a/w_a;
+  su2double Omega_new = Omega, Omega_old = Omega;
+
+  su2double error_value, NR_error;
+  su2double zeta, dzeta, relax = 0.3;
+  su2double k0, k1, k2, k3;
+
+  vector<su2double> num1(NT*dofs,0);
+  vector<su2double> num2(NT*dofs,0);
+  vector<su2double> num3(NT*dofs,0);
+  vector<su2double> Rs(NT*dofs,0);
+
+  L2norm = 0.0;
+  num = 0.0;
+  den = 0.0;
+  for (int i=0;i<NT*dofs;i++) {
+          
+         num1[i] = -Force[i];
+         Rs[i]   = -Force[i];
+         num2[i] = 0.0;
+
+  for (int j=0;j<NT*dofs;j++) {
+
+         Rs[i]   += ((Omega2 * DM2[i][j] + KHB[i][j])*eta[j]);
+         num1[i] += (KHB[i][j] * eta[j]); 
+         num2[i] += (DM2[i][j] * eta[j]);
+
+  }
+
+  num += (num1[i] * num2[i]);
+  den += (num2[i] * num2[i]); 
+
+  L2norm += (0.5*(Rs[i]*Rs[i])); 
+
+  } 
+
+  su2double OmegaHBcheck = -num/den;
+  OmegaHB_new   = w_a*sqrt(OmegaHBcheck);
+  error_value  = (OmegaHB_new - OmegaHB)/OmegaHB;
+
+  ///OmegaHB_new  = OmegaHB + 0.7*(OmegaHB_new - OmegaHB);
+
+  if (OmegaHBcheck <= 0.0) { cout << "Neg. Frequency" << endl; OmegaHB_new = OmegaHB; };
+
+//
+////////////////////////////////////////////////////////////////////
+//
+//cout << "Omega old=" << Omega_old << endl; 
+//cout << "Starting NR iterations..." <<  endl;
+//for (int IJK=0;IJK<1;IJK++) {
+////
+////
+//L2norm = 0.0;
+//k0 = 0.0;
+//k1 = 0.0;
+//k2 = 0.0;
+//k3 = 0.0;
+//for (int i=0;i<NT*dofs;i++) {
+//        
+//       Rs[i]   = -cons*Force[i];
+//       num1[i] = 0.0;
+//       num2[i] = 0.0;
+//       num3[i] = 0.0;
+
+//for (int j=0;j<NT*dofs;j++) {
+
+//       Rs[i]   += ( Omega2 * DM2[i][j] * eta[j] 
+//                  + Omega * DT[i][j] * eta[j] 
+//                  + KHB[i][j] * eta[j] );
+
+//       num1[i] += (DM2[i][j] * eta[j]);
+//       num2[i] += (DT[i][j]  * eta[j]);
+//       num3[i] += (KHB[i][j] * eta[j]); 
+//}
+
+//k0 += (num3[i] * num2[i] - Force[i] * num2[i]);
+//k1 += (2.0 * num1[i] * num1[i]);
+//k2 += (3.0 * num2[i] * num1[i]); 
+//k3 += (num2[i] * num2[i] + 2.0 * num3[i] * num1[i] - Force[i] * num1[i]);
+
+//L2norm += (0.5*(Rs[i]*Rs[i])); 
+
+//} 
+
+//zeta  = k3 * Omega3 + k2 * Omega2 + k1 * Omega + k0;
+//dzeta = 3.0 * k3 * Omega2 + 2.0 * k2 * Omega + k1;
+
+//Omega_new = Omega_old - relax * zeta / dzeta;
+
+//NR_error = (Omega_new - Omega_old)/Omega_old;
+
+//Omega_old = Omega_new;
+//Omega     = Omega_new;
+//Omega2    = Omega * Omega;
+//Omega3    = Omega * Omega * Omega;
+
+//cout << "Omega_new= " << Omega_new << endl;
+//}
+//cout << "Freq. Prediction: NR error= " << NR_error <<  endl;
+
+//OmegaHB_new   = w_a*sqrt(Omega2);
+//error_value  = (OmegaHB_new - OmegaHB)/OmegaHB;
+
+//if (OmegaHB_new < 0.0) OmegaHB_new = OmegaHB;
+
+//PeriodHB_new  = 2*PI_NUMBER/OmegaHB_new;
+//
+//////////////////////////////////////////////////////////////////////////////////////
+
+  cout << "New HB Omega = " << (OmegaHB_new) << " / L2NORM = " << L2norm  << endl;
+  cout << "Error in omega calc = " << error_value << endl;
+ 
+  if ((abs(error_value) < 0.0000001 || OmegaHB_new < 0.001)&&(abs(L2norm) < 0.00000000000001)) {error_flag = true;} 
+       	
+  for (int destination=1;destination<SU2_MPI::GetSize();destination++){
+	      SU2_MPI::Send(&OmegaHB_new, 1, MPI_DOUBLE, destination, 0, SU2_MPI::GetComm());
+	      SU2_MPI::Send(&L2norm, 1, MPI_DOUBLE, destination, 0, SU2_MPI::GetComm());
+  }
+         
+  }  
+  else {
+	  SU2_MPI::Recv(&OmegaHB_new, 1, MPI_DOUBLE, 0, 0, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
+	  SU2_MPI::Recv(&L2norm, 1, MPI_DOUBLE, 0, 0, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
+  }
+          
+  SU2_MPI::Barrier(SU2_MPI::GetComm());
+
+  PeriodHB_new  = 2*PI_NUMBER/OmegaHB_new;
+  config->SetHarmonicBalance_Period(PeriodHB_new);
+  config->SetStr_L2_norm(L2norm);
+
+  config->SetOmega_HB(0.0, 0);
+  for (int i=1;i<NH+1;i++)  
+    config->SetOmega_HB(i*OmegaHB_new, i);
+
+  for (int i=1;i<NH+1;i++)  
+    config->SetOmega_HB(-i*OmegaHB_new, NH + i);
+
+}
+
+void CSolver::Velocity_Update_2D(CConfig *config, su2double* lift, su2double* drag, su2double* moment, int harmonics, bool &error_flag) {
+
+  int NT = harmonics, NH = (NT-1)/2, dofs = 2;
+  vector<su2double> num1(NT*dofs,0);
+  vector<su2double> num2(NT*dofs,0);
+  vector<su2double> Rs(NT*dofs,0);
+  
+  vector<su2double> cl(NT,0);
+  vector<su2double> cd(NT,0); 
+  vector<su2double> cm(NT,0);
+  su2double num = 0.0;
+  su2double den = 0.0;
+   /*--- Retrieve values from the config file ---*/
+  su2double w_h = config->GetAeroelastic_Frequency_Plunge();
+  su2double w_a = config->GetAeroelastic_Frequency_Pitch();
+  su2double x_a = config->GetAeroelastic_CG_Location();
+  su2double r_a = sqrt(config->GetAeroelastic_Radius_Gyration_Squared());
+  su2double wr  = w_h/w_a;
+  su2double w_alpha = w_a;
+//  su2double w_alpha = config->GetAeroelastic_Frequency_Pitch();
+  su2double vf      = config->GetAeroelastic_Flutter_Speed_Index();
+  su2double b       = config->GetLength_Reynolds()/2.0; // airfoil semichord, Reynolds length is by defaul 1.0
+  su2double Alpha   = config->GetAoA()*PI_NUMBER/180.0;
+  unsigned long TimeIter = config->GetTimeIter();
+ 
+  vector<su2double> xi(2,0.0);
+
+//
+  cout << "Updating Frequency" << endl;
+  //
+ // vector<vector<su2double>> Kdofs(dofs, vector<su2double>(dofs,0.0));
+// Mass Matrix
+  vector<vector<su2double> > M(2,vector<su2double>(2,0.0));
+  vector<vector<su2double> > M_inv(2,vector<su2double>(2,0.0)); 
+  M[0][0] = 1;
+  M[0][1] = x_a;
+  M[1][0] = x_a;
+  M[1][1] = r_a*r_a;
+
+  Inverse_matrix2D(M, M_inv);
+
+  // Stiffness Matrix
+  vector<vector<su2double> > K(2,vector<su2double>(2,0.0));
+  K[0][0] = (w_h/w_a)*(w_h/w_a);
+  K[0][1] = 0.0;
+  K[1][0] = 0.0;
+  K[1][1] = r_a*r_a;
+
+   // Stiffness Matrix
+  vector<vector<su2double> > T(2,vector<su2double>(2,0.0));
+  T[0][0] = 2*xi[0]*(w_h/w_a)*(w_h/w_a);
+  T[0][1] = 0.0;
+  T[1][0] = 0.0;
+  T[1][1] = 2*xi[1]*r_a*r_a;
+
+  vector<vector<su2double> > AK(2,vector<su2double>(2,0.0));
+  vector<vector<su2double> > AT(2,vector<su2double>(2,0.0));
+ 
+  for (int i=0; i<2; i++) {
+  for (int j=0; j<2; j++) {
+    for (int k=0; k<2; k++) {
+      AK[i][j] += M_inv[i][k]* K[k][j];
+      AT[i][j] += M_inv[i][k]* T[k][j];
+    }  
+  }
+  }
+
+  /*--- Get simualation period from config file ---*/
+  su2double Period = config->GetHarmonicBalance_Period();
+
+  /*--- Non-dimensionalize the input period, if necessary.      */
+  Period /= config->GetTime_Ref();
+
+  //su2double OmegaHB = 2 * PI_NUMBER / Period;
+  su2double OmegaHB = config->GetOmega_HB()[1];
+  //su2double OmegaHB_old = config->GetHB_frequency_old();
+
+  vector<vector<su2double>> DD(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> EE(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> DHB(NT*dofs, vector<su2double>(NT*dofs,0.0));  
+  HB_Operator(config, DD, EE, NT, OmegaHB);
+
+   for (int i=0;i<dofs;i++) {
+   for (int j=0;j<NT;j++)   {
+   for (int k=0;k<NT;k++)   {
+
+        DHB[i*NT+j][i*NT+k] = DD[j][k];
+   
+   }
+   }
+   }
+
+//
+// transform for dofs
+//
+  int position = 0;
+  vector<vector<su2double>> Q(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  vector<vector<su2double>> Qt(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for (int i=0; i<dofs; i++) {
+	for (int j=0; j<NT; j++) {
+		Q[NT*i+j][position+j*dofs] = 1;
+	}
+	position = position + 1;
+  }
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      Qt[j][i] = Q[i][j];
+    }
+  }
+//  
+  vector<vector<su2double>> DM(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  vector<vector<su2double>> DM2(NT*dofs,vector<su2double>(NT*dofs,0.0)); 
+  vector<vector<su2double>> tmp(NT*dofs,vector<su2double>(NT*dofs,0.0));  
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      for(int k=0;k<NT*dofs;k++) {
+        tmp[i][j] += DHB[i][k] * Q[k][j];
+      }
+    }
+  }
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      for(int k=0;k<NT*dofs;k++) {
+        DM[i][j] += Qt[i][k] * tmp[k][j];
+      }
+      //DM[i][j] = DM[i][j] ;
+    }
+  } 
+
+  for(int i=0;i<NT*dofs;i++) {
+      for(int j=0;j<NT*dofs;j++) {
+	  for(int k=0;k<NT*dofs;k++) {
+             DM2[i][j] += DM[i][k] * DM[k][j];
+	  }
+      }
+     // AHB[i][j] = ( AHB[i][j] * OmegaHB ) / w_alpha;
+    }
+
+
+  vector<vector<su2double>> KHB(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for(int i=0;i<NT;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  KHB[i*dofs+j][i*dofs+k] = AK[j][k];
+	  }
+	  }
+	
+  }  
+  
+  vector<su2double> Force(NT*dofs,0);
+  su2double cons = vf*vf/PI_NUMBER;
+  vector<su2double> f(2,0.0);
+  vector<su2double> f_tilde(2,0.0);
+  vector<su2double> eta(NT*dofs,0.0);
+
+  vector<vector<su2double>> q(2,vector<su2double>(NT,0.0));
+//  vector<vector<su2double>> q_dot(2,vector<su2double>(NT,0.0));
+//  vector<vector<su2double>> theta(2,vector<su2double>(NT,0.0));
+//  vector<vector<su2double>> theta_dot(2,vector<su2double>(NT,0.0)); 
+
+  for (int i=0;i<NT;i++){  
+    q[1][i] = config->GetHB_pitch(i);
+    q[0][i] = config->GetHB_plunge(i);
+ }
+
+  int k = 0;
+  for(int i=0;i<NT*dofs;i+=dofs) {
+
+          eta[i+0] = q[0][k];
+          eta[i+1] = q[1][k];
+
+          k += 1;
+  }
+
+//for(int i=0;i<NT*dofs;i++) {
+
+//    eta[i] = config->GetHB_displacements(i);
+
+//}
+
+  cout << "ETA" << endl;
+  for (int i=0;i<NT*dofs;i++) {
+          cout << eta[i] << endl;
+  }
+  cout << endl;
+
+  for(int i=0;i<harmonics;i++) {
+
+          cl[i] = lift[i]*cos(Alpha) + drag[i]*sin(Alpha);
+          cd[i] = -lift[i]*sin(Alpha) + drag[i]*cos(Alpha);
+        
+          cm[i] = moment[i];
+
+               cout << "Lift= " << cl[i] << " Moment= " << cm[i] << "\n" << endl; 
+  }
+
+//for(int i=0;i<NT*dofs;i++) {
+
+//    Force[i] = config->GetHB_forces(i);
+
+//}
+
+  for(int count=0;count<NT;count++){
+
+  f[0] = (-cl[count]);
+  f[1] = (2*-cm[count]);
+
+  //f_tilde = Phi'*f
+  for (int i=0; i<2; i++) {
+    f_tilde[i] = 0;
+    for (int k=0; k<2; k++) {
+      f_tilde[i] += M_inv[i][k]*f[k]; //PHI transpose
+    }
+  }
+
+  Force[count*dofs+0] = f_tilde[0];
+  Force[count*dofs+1] = f_tilde[1];
+
+  }
+
+//////////////////////////////////////////////////////////////////////////
+
+  su2double FlutterSpeed;
+  su2double FS2;
+  su2double L2norm;
+
+  su2double vf_old = vf, vf2 = vf*vf, vf_new;
+  su2double OmegaHBcheck = OmegaHB*OmegaHB/w_a /w_a;
+  su2double OmegaHBnew;
+  su2double PeriodHBnew;
+  su2double error_value, NR_error, zeta, dzeta;
+  su2double gamma = 0.00000001;
+
+  cons = 1.0/PI_NUMBER;
+
+  for (int IJK=0;IJK<1;IJK++) {
+  L2norm = 0.0;
+  num = 0.0;
+  den = 0.0;
+  for (int i=0;i<NT*dofs;i++) {
+          
+         num2[i] = -cons*Force[i];
+         Rs[i]   = -cons*vf2*Force[i];
+         num1[i] = 0.0;
+
+  for (int j=0;j<NT*dofs;j++) {
+
+         Rs[i]   += ((OmegaHBcheck * DM2[i][j] + KHB[i][j])*eta[j]);
+         num1[i] += (OmegaHBcheck * DM2[i][j] * eta[j] + KHB[i][j] * eta[j]); 
+         //num2[i] += (DM2[i][j] * eta[j]);
+
+  }
+
+  num += (num1[i] * num2[i]);
+  den += (num2[i] * num2[i]); 
+
+  L2norm += (0.5*(Rs[i]*Rs[i])); 
+
+  } 
+
+  gamma = L2norm;
+
+  zeta  = den*vf2*vf2*vf + num*vf2*vf - gamma;
+  dzeta = 5*den*vf2*vf + 3*num*vf2;
+
+  vf_new = vf_old - 0.7*zeta/dzeta;
+
+//vf2 = -num/den;
+//vf  = sqrt(vf2);
+  NR_error = (vf_new - vf_old)/vf_old;
+
+  vf = vf_new;
+  vf_old = vf_new;
+  vf2 = vf*vf;
+  }
+  cout << "N-R error = " << NR_error << endl;
+ 
+  error_value = (vf_new-vf)/vf;
+  //vf = vf_new - 0.7*(vf_new-vf);
+ 
+
+//if (TimeIter == 1) {
+//  vf = 0.69;
+//}
+//else if (TimeIter == 2) {
+//  vf = 0.68;
+//}
+//else if (TimeIter == 3) {
+//  vf = 0.689;
+//}
+//else if (TimeIter == 15) {
+//  vf = 0.688;
+//}
+//else if (TimeIter == 35) {
+//  vf = 0.687;
+//}
+//else if (TimeIter > 3 && TimeIter < 15) {
+//  vf = 0.689;
+//}
+//else if (TimeIter > 15 && TimeIter < 35) {
+//  vf = 0.688;
+//}
+//else vf = 0.687;
+
+////////////////////////////////////////////////////////////////////
+//
+  cout << "New  VF = " << vf << " / L2NORM = " << L2norm  << endl;
+  cout << "Error in velocity calc = " << error_value << endl;
+
+  //config->SetAeroelastic_Flutter_Speed_Index(FlutterSpeed);
+ 
+  if ((abs(error_value) < 0.0000001 || vf < 0.01)&&(abs(L2norm) < 0.00000000000001)) {error_flag = true;} 
+
+  config->SetStr_L2_norm(L2norm);
+
+  config->SetAeroelastic_Flutter_Speed_Index(vf);
+  
+}
+
+void CSolver::Velocity_Update_3D(CConfig *config, su2double**& gen_forces, int harmonics, bool &error_flag) {
+ 
+  /*--- Retrieve values from the config file ---*/
+  unsigned short modes = config->GetNumber_Modes();
+  vector<su2double> w_modes(modes,0.0); //contains solution(displacements and rates) of typical section wing model.
+
+  su2double vf      = config->GetAeroelastic_Flutter_Speed_Index();
+  su2double b       = config->GetRefWing_Length()/2.0; // root airfoil semichord
+  su2double Vo      = config->GetConicalRefVol();
+  su2double scale_param = 1/config->Get_Scaling_Parameter();
+
+  su2double w_a = config->GetAeroelastic_Frequency_Pitch();
+ 
+  su2double L2norm, FlutterSpeed;
+  su2double DEG2RAD = PI_NUMBER/180.0;
+  su2double w_alpha = w_a;
+
+  int dofs = modes, NT = harmonics, NH = (NT-1)/2;
+  /*--- Structural Equation damping ---*/
+  vector<su2double> xi(modes,0.02);
+  for (unsigned short i=0;i<modes; i++) {
+
+          w_modes[i] = config->GetAero_Omega(i)/w_a;
+
+  }
+
+  su2double num = 0.0;
+  su2double den = 0.0;
+
+  if (rank == MASTER_NODE)
+  { 
+//
+  cout << "Updating Velocity (3D)" << endl;
+//
+  vector<vector<su2double> > K(modes,vector<su2double>(modes,0.0));
+  for (unsigned short i=0;i<modes; i++) {
+
+          K[i][i] = w_modes[i]*w_modes[i];
+
+  }
+
+   // Stiffness Matrix
+  vector<vector<su2double> > T(modes,vector<su2double>(modes,0.0));
+  for (unsigned short i=0;i<modes; i++) {
+
+          T[i][i] = 2.0*xi[i]*w_modes[i];
+
+  }
+
+  /*--- Get simualation period from config file ---*/
+  su2double Period = config->GetHarmonicBalance_Period();
+
+  /*--- Non-dimensionalize the input period, if necessary.      */
+  Period /= config->GetTime_Ref();
+
+  //su2double OmegaHB = 2 * PI_NUMBER / Period;
+  su2double OmegaHB = config->GetOmega_HB()[1];
+  //su2double OmegaHB_old = config->GetHB_frequency_old();
+
+  vector<vector<su2double>> DD(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> EE(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> DHB(NT*dofs, vector<su2double>(NT*dofs,0.0));  
+  HB_Operator(config, DD, EE, NT, OmegaHB);
+
+   for (int i=0;i<dofs;i++) {
+   for (int j=0;j<NT;j++)   {
+   for (int k=0;k<NT;k++)   {
+
+        DHB[i*NT+j][i*NT+k] = DD[j][k];
+   
+   }
+   }
+   }
+
+//
+// transform for dofs
+//
+  int position = 0;
+  vector<vector<su2double>> Q(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  vector<vector<su2double>> Qt(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for (int i=0; i<dofs; i++) {
+	for (int j=0; j<NT; j++) {
+		Q[NT*i+j][position+j*dofs] = 1;
+	}
+	position = position + 1;
+  }
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      Qt[j][i] = Q[i][j];
+    }
+  }
+//  
+  vector<vector<su2double>> DM(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  vector<vector<su2double>> DM2(NT*dofs,vector<su2double>(NT*dofs,0.0)); 
+  vector<vector<su2double>> DT(NT*dofs,vector<su2double>(NT*dofs,0.0)); 
+  vector<vector<su2double>> tmp(NT*dofs,vector<su2double>(NT*dofs,0.0));  
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      for(int k=0;k<NT*dofs;k++) {
+        tmp[i][j] += DHB[i][k] * Q[k][j];
+      }
+    }
+  }
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      for(int k=0;k<NT*dofs;k++) {
+        DM[i][j] += Qt[i][k] * tmp[k][j];
+      }
+      //DM[i][j] = DM[i][j] ;
+    }
+  } 
+
+  for(int i=0;i<NT*dofs;i++) {
+      for(int j=0;j<NT*dofs;j++) {
+	  for(int k=0;k<NT*dofs;k++) {
+             DM2[i][j] += DM[i][k] * DM[k][j];
+	  }
+      }
+     // AHB[i][j] = ( AHB[i][j] * OmegaHB ) / w_alpha;
+    }
+
+
+  vector<vector<su2double>> KHB(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for(int i=0;i<NT;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  KHB[i*dofs+j][i*dofs+k] = K[j][k];
+	  }
+	  }
+	
+  }  
+  vector<vector<su2double>> THB(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for(int i=0;i<NT;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  THB[i*dofs+j][i*dofs+k] = T[j][k];
+	  }
+	  }
+	
+  }  
+    for(int i=0;i<NT*dofs;i++) {
+      for(int j=0;j<NT*dofs;j++) {
+	  for(int k=0;k<NT*dofs;k++) {
+             DT[i][j] += THB[i][k] * DM[k][j];
+	  }
+      }
+  }
+
+ 
+  vector<su2double> Force(NT*dofs,0);
+  su2double cons = b*b/Vo/2.0;
+  vector<su2double> eta(NT*dofs,0.0);
+  vector<vector<su2double>> q(modes,vector<su2double>(NT,0.0));
+// 
+  cout << "Computing Forces..." << endl;
+  for(int count=0;count<NT;count++){
+  for (int i=0; i<modes; i++) {
+   
+    Force[count*dofs+i] = (cons * scale_param * gen_forces[count][i]);
+    
+  }
+  }
+	
+  for (int i=0;i<NT;i++){  
+  for (int j=0;j<modes;j++) {
+    q[j][i]     = config->GetHB_Modal_Displacement(i, j);
+  }
+  }  
+
+  int l = 0;
+  for(int i=0;i<NT*dofs;i+=dofs) {
+  for(int j=0;j<modes;j++) {
+
+	  eta[i+j] = q[j][l];
+  }
+	  l += 1;
+  }
+//
+
+  cout << "ETA" << endl;
+  for (int i=0;i<NT*dofs;i++) {
+          cout << eta[i] << endl;
+  }
+  cout << endl;
+ 
+//////////////////////////////////////////////////////////////////////////
+
+  su2double FS2;
+
+  su2double vf_old = vf, vf2 = vf*vf, vf_new;
+  su2double Omega2 = OmegaHB*OmegaHB/w_a /w_a;
+  su2double OmegaHBnew;
+  su2double PeriodHBnew;
+  su2double error_value, NR_error, zeta, dzeta;
+  su2double gamma = 0.00000001;
+
+  vector<su2double> num1(NT*dofs,0);
+  vector<su2double> num2(NT*dofs,0);
+  vector<su2double> num3(NT*dofs,0);
+  vector<su2double> Rs(NT*dofs,0);
+
+  L2norm = 0.0;
+  num = 0.0;
+  den = 0.0;
+  for (int i=0;i<NT*dofs;i++) {
+          
+         Rs[i]   = -vf*vf*Force[i];
+         num1[i] = 0.0;
+
+  for (int j=0;j<NT*dofs;j++) {
+
+         Rs[i]   += ((Omega2 * DM2[i][j] + KHB[i][j])*eta[j]);
+         num1[i] += ((Omega2 * DM2[i][j] + KHB[i][j])*eta[j]); 
+
+  }
+
+  num += (Force[i] * num1[i]);
+  den += (Force[i] * Force[i]); 
+
+  L2norm += (0.5*(Rs[i]*Rs[i])); 
+
+  } 
+
+  FS2     = num/den;
+  vf_new  = sqrt(FS2);
+
+  error_value  = (vf_new - vf)/vf;
+
+  su2double eta_relax = 1.0;
+
+  FlutterSpeed = vf + eta_relax*(vf_new - vf);
+
+  ///vf_new = vf + 0.7*(vf_new-vf);
+
+//for (int IJK=0;IJK<1;IJK++) {
+//L2norm = 0.0;
+//num = 0.0;
+//den = 0.0;
+//for (int i=0;i<NT*dofs;i++) {
+//        
+//       num2[i] = -Force[i];
+//       Rs[i]   = -vf2*Force[i];
+//       num1[i] = 0.0;
+
+//for (int j=0;j<NT*dofs;j++) {
+
+//       Rs[i]   += (Omega2 * DM2[i][j] * eta[j] + KHB[i][j] * eta[j]);
+//       num1[i] += (Omega2 * DM2[i][j] * eta[j] + KHB[i][j] * eta[j]); 
+//       //num2[i] += (DM2[i][j] * eta[j]);
+//}
+
+//num += (num1[i] * num2[i]);
+//den += (num2[i] * num2[i]); 
+
+//L2norm += (0.5*(Rs[i]*Rs[i])); 
+
+//} 
+
+//gamma = L2norm;
+
+//zeta  = den*vf2*vf2*vf + num*vf2*vf - gamma;
+//dzeta = 5*den*vf2*vf + 3*num*vf2;
+
+//vf_new = vf_old - 0.7*zeta/dzeta;
+
+//NR_error = (vf_new - vf_old)/vf_old;
+
+//vf = vf_new;
+//vf_old = vf_new;
+//vf2 = vf*vf;
+//}
+//cout << "N-R error = " << NR_error << endl;
+
+//error_value = (vf_new-vf)/vf;
+////vf = vf_new - 0.7*(vf_new-vf);
+
+////////////////////////////////////////////////////////////////////
+
+  cout << "New  VF = " << vf_new << " / L2NORM = " << L2norm  << endl;
+  cout << "Error in velocity calc = " << error_value << endl;
+
+  //config->SetAeroelastic_Flutter_Speed_Index(FlutterSpeed);
+ 
+  if ((abs(error_value) < 0.0000001 || vf < 0.01)&&(abs(L2norm) < 0.00000000000001)) {error_flag = true;} 
+
+  for (int destination=1;destination<SU2_MPI::GetSize();destination++) {
+	      SU2_MPI::Send(&FlutterSpeed, 1, MPI_DOUBLE, destination, 0, SU2_MPI::GetComm());
+	      SU2_MPI::Send(&L2norm, 1, MPI_DOUBLE, destination, 0, SU2_MPI::GetComm());
+  }
+         
+  }  
+  else {
+	  SU2_MPI::Recv(&FlutterSpeed, 1, MPI_DOUBLE, 0, 0, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
+	  SU2_MPI::Recv(&L2norm, 1, MPI_DOUBLE, 0, 0, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
+  }
+
+  SU2_MPI::Barrier(SU2_MPI::GetComm());
+  config->SetStr_L2_norm(L2norm);
+  config->SetAeroelastic_Flutter_Speed_Index(FlutterSpeed);
+  
+}
+
+void CSolver::Frequency_Velocity_Update_3D(CConfig *config, su2double**& gen_forces, int harmonics, bool &error_flag) {
+ 
+  /*--- Retrieve values from the config file ---*/
+  unsigned short modes = config->GetNumber_Modes();
+  vector<su2double> w_modes(modes,0.0); //contains solution(displacements and rates) of typical section wing model.
+
+  su2double vf      = config->GetAeroelastic_Flutter_Speed_Index();
+  su2double b       = config->GetRefWing_Length()/2.0; // root airfoil semichord
+  su2double Vo      = config->GetConicalRefVol();
+  su2double scale_param = 1/config->Get_Scaling_Parameter();
+
+  su2double w_a = config->GetAeroelastic_Frequency_Pitch();
+ 
+  su2double DEG2RAD = PI_NUMBER/180.0;
+  su2double w_alpha = w_a;
+
+  int dofs = modes, NT = harmonics, NH = (NT-1)/2;
+  /*--- Structural Equation damping ---*/
+  vector<su2double> xi(modes,0.02);
+  for (unsigned short i=0;i<modes; i++) {
+
+          w_modes[i] = config->GetAero_Omega(i)/w_a;
+
+  }
+
+  su2double num = 0.0;
+  su2double den = 0.0;
+
+//
+  cout << "Updating Frequency & Velocity (3D)" << endl;
+//
+  vector<vector<su2double> > K(modes,vector<su2double>(modes,0.0));
+  for (unsigned short i=0;i<modes; i++) {
+
+          K[i][i] = w_modes[i]*w_modes[i];
+
+  }
+
+   // Stiffness Matrix
+  vector<vector<su2double> > T(modes,vector<su2double>(modes,0.0));
+  for (unsigned short i=0;i<modes; i++) {
+
+          T[i][i] = 2.0*xi[i]*w_modes[i];
+
+  }
+
+  /*--- Get simualation period from config file ---*/
+  su2double Period = config->GetHarmonicBalance_Period();
+
+  /*--- Non-dimensionalize the input period, if necessary.      */
+  Period /= config->GetTime_Ref();
+
+  //su2double OmegaHB = 2 * PI_NUMBER / Period;
+  su2double OmegaHB = config->GetOmega_HB()[1];
+  //su2double OmegaHB_old = config->GetHB_frequency_old();
+
+  vector<vector<su2double>> DD(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> EE(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> DHB(NT*dofs, vector<su2double>(NT*dofs,0.0));  
+  HB_Operator(config, DD, EE, NT, OmegaHB);
+
+   for (int i=0;i<dofs;i++) {
+   for (int j=0;j<NT;j++)   {
+   for (int k=0;k<NT;k++)   {
+
+        DHB[i*NT+j][i*NT+k] = DD[j][k];
+   
+   }
+   }
+   }
+
+//
+// transform for dofs
+//
+  int position = 0;
+  vector<vector<su2double>> Q(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  vector<vector<su2double>> Qt(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for (int i=0; i<dofs; i++) {
+	for (int j=0; j<NT; j++) {
+		Q[NT*i+j][position+j*dofs] = 1;
+	}
+	position = position + 1;
+  }
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      Qt[j][i] = Q[i][j];
+    }
+  }
+//  
+  vector<vector<su2double>> DM(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  vector<vector<su2double>> DM2(NT*dofs,vector<su2double>(NT*dofs,0.0)); 
+  vector<vector<su2double>> DT(NT*dofs,vector<su2double>(NT*dofs,0.0)); 
+  vector<vector<su2double>> tmp(NT*dofs,vector<su2double>(NT*dofs,0.0));  
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      for(int k=0;k<NT*dofs;k++) {
+        tmp[i][j] += DHB[i][k] * Q[k][j];
+      }
+    }
+  }
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      for(int k=0;k<NT*dofs;k++) {
+        DM[i][j] += Qt[i][k] * tmp[k][j];
+      }
+      //DM[i][j] = DM[i][j] ;
+    }
+  } 
+
+  for(int i=0;i<NT*dofs;i++) {
+      for(int j=0;j<NT*dofs;j++) {
+	  for(int k=0;k<NT*dofs;k++) {
+             DM2[i][j] += DM[i][k] * DM[k][j];
+	  }
+      }
+     // AHB[i][j] = ( AHB[i][j] * OmegaHB ) / w_alpha;
+    }
+
+
+  vector<vector<su2double>> KHB(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for(int i=0;i<NT;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  KHB[i*dofs+j][i*dofs+k] = K[j][k];
+	  }
+	  }
+	
+  }  
+  vector<vector<su2double>> THB(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for(int i=0;i<NT;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  THB[i*dofs+j][i*dofs+k] = T[j][k];
+	  }
+	  }
+	
+  }  
+    for(int i=0;i<NT*dofs;i++) {
+      for(int j=0;j<NT*dofs;j++) {
+	  for(int k=0;k<NT*dofs;k++) {
+             DT[i][j] += THB[i][k] * DM[k][j];
+	  }
+      }
+  }
+
+ 
+  vector<su2double> Force(NT*dofs,0);
+  su2double cons = b*b/Vo/2.0;
+  vector<su2double> eta(NT*dofs,0.0);
+  vector<vector<su2double>> q(modes,vector<su2double>(NT,0.0));
+// 
+  cout << "Computing Forces..." << endl;
+  for(int count=0;count<NT;count++){
+  for (int i=0; i<modes; i++) {
+   
+    Force[count*dofs+i] = (cons * scale_param * gen_forces[count][i]);
+    
+  }
+  }
+	
+  for (int i=0;i<NT;i++){  
+  for (int j=0;j<modes;j++) {
+    q[j][i]     = config->GetHB_Modal_Displacement(i, j);
+  }
+  }  
+
+  int l = 0;
+  for(int i=0;i<NT*dofs;i+=dofs) {
+  for(int j=0;j<modes;j++) {
+
+	  eta[i+j] = q[j][l];
+  }
+	  l += 1;
+  }
+//
+
+  cout << "ETA" << endl;
+  for (int i=0;i<NT*dofs;i++) {
+          cout << eta[i] << endl;
+  }
+  cout << endl;
+ 
+//////////////////////////////////////////////////////////////////////////
+
+  su2double FlutterSpeed;
+  su2double FS2;
+  su2double L2norm;
+
+  su2double Omega  = OmegaHB/w_a;
+  su2double Omega2 = OmegaHB*OmegaHB/w_a/w_a;
+  su2double Omega3 = OmegaHB*OmegaHB*OmegaHB/w_a/w_a/w_a;
+  su2double Omega_new = Omega, Omega_old = Omega;
+  su2double OmegaHB_new, PeriodHB_new;
+
+  su2double vf_old = vf, vf2 = vf*vf, vf_new;
+  su2double error_vf_value, error_w_value, error_value;
+
+  vector<su2double> num1(NT*dofs,0);
+  vector<su2double> num2(NT*dofs,0);
+  vector<su2double> num3(NT*dofs,0);
+  vector<su2double> Rs(NT*dofs,0);
+
+  for (int IKL=0;IKL<1;IKL++) {
+
+  L2norm = 0.0;
+  num = 0.0;
+  den = 0.0;
+  for (int i=0;i<NT*dofs;i++) {
+          
+         num1[i] = 0.0;
+
+  for (int j=0;j<NT*dofs;j++) {
+
+         num1[i] += ((Omega2 * DM2[i][j] + KHB[i][j])*eta[j]); 
+
+  }
+
+  num += (Force[i] * num1[i]);
+  den += (Force[i] * Force[i]); 
+
+  } 
+
+  vf2     = num/den;
+  vf_new  = sqrt(vf2);
+
+  error_vf_value  = (vf_new - vf)/vf;
+
+  FlutterSpeed = vf_new;
+
+  num = 0.0;
+  den = 0.0;
+  for (int i=0;i<NT*dofs;i++) {
+          
+         num1[i] = -vf2*Force[i];
+         Rs[i]   = -vf2*Force[i];
+         num2[i] = 0.0;
+
+  for (int j=0;j<NT*dofs;j++) {
+
+         Rs[i]   += ((Omega2 * DM2[i][j] + KHB[i][j])*eta[j]);
+         num1[i] += (KHB[i][j] * eta[j]); 
+         num2[i] += (DM2[i][j] * eta[j]);
+
+  }
+
+  num += (num1[i] * num2[i]);
+  den += (num2[i] * num2[i]); 
+
+  L2norm += (0.5*(Rs[i]*Rs[i])); 
+
+  } 
+
+  Omega2       = -num/den;
+  Omega        = sqrt(Omega2);
+  OmegaHB_new  = w_a * Omega;
+  PeriodHB_new = 2*PI_NUMBER/OmegaHB_new;
+
+  error_w_value  = (OmegaHB_new - OmegaHB)/OmegaHB;
+
+  }
+
+  error_value = error_vf_value + error_w_value;
+///////////////////////////////////////////////////////////////////////////////////
+
+  cout << "New  VF = " << vf_new << " / L2NORM = " << L2norm  << endl;
+  cout << "Error in velocity calc = " << error_vf_value << endl;
+  cout << "New HB Omega = " << (OmegaHB_new) << " / L2NORM = " << L2norm  << endl;
+  cout << "Error in omega calc = " << error_w_value << endl;
+  
+///////////////////////////////////////////////////////////////////////////////////
+
+  if ((abs(error_value) < 0.000001 || vf < 0.01)&&(abs(L2norm) < 0.00000000000001)) {error_flag = true;} 
+
+  config->SetStr_L2_norm(L2norm);
+
+  config->SetAeroelastic_Flutter_Speed_Index(vf_new);
+
+  config->SetHarmonicBalance_Period(PeriodHB_new);
+  config->SetStr_L2_norm(L2norm);
+
+  config->SetOmega_HB(0.0, 0);
+  for (int i=1;i<NH+1;i++)  
+    config->SetOmega_HB(i*OmegaHB_new, i);
+
+  for (int i=1;i<NH+1;i++)  
+    config->SetOmega_HB(-i*OmegaHB_new, NH + i);
+ 
+}
+
+void CSolver::Velocity_Update_2D2(CConfig *config, su2double* lift, su2double* drag, su2double* moment, int harmonics, bool &error_flag) {
+
+  int NT = harmonics, NH = (NT-1)/2, dofs = 4;
+  vector<su2double> num1(NT*dofs,0);
+  vector<su2double> num2(NT*dofs,0);
+  vector<su2double> Rs(NT*dofs,0);
+  
+  vector<su2double> cl(NT,0);
+  vector<su2double> cd(NT,0); 
+  vector<su2double> cm(NT,0);
+  su2double num = 0.0;
+  su2double den = 0.0;
+  su2double lum = 0.0;
+   /*--- Retrieve values from the config file ---*/
+  su2double w_h = config->GetAeroelastic_Frequency_Plunge();
+  su2double w_a = config->GetAeroelastic_Frequency_Pitch();
+  su2double x_a = config->GetAeroelastic_CG_Location();
+  su2double r_a = sqrt(config->GetAeroelastic_Radius_Gyration_Squared());
+  su2double wr  = w_h/w_a;
+  su2double w_alpha = w_a;
+//  su2double w_alpha = config->GetAeroelastic_Frequency_Pitch();
+  su2double vf      = config->GetAeroelastic_Flutter_Speed_Index();
+  su2double b       = config->GetLength_Reynolds()/2.0; // airfoil semichord, Reynolds length is by defaul 1.0
+  su2double Alpha   = config->GetAoA()*PI_NUMBER/180.0;
+  unsigned long TimeIter = config->GetTimeIter();
+ 
+  vector<su2double> xi(2,0.0);
+
+//
+  cout << "Updating Frequency" << endl;
+  //
+  vector<vector<su2double>> Kdofs(dofs, vector<su2double>(dofs,0.0));
+// Mass Matrix
+  vector<vector<su2double> > M(2,vector<su2double>(2,0.0));
+  vector<vector<su2double> > M_inv(2,vector<su2double>(2,0.0)); 
+  M[0][0] = 1;
+  M[0][1] = x_a;
+  M[1][0] = x_a;
+  M[1][1] = r_a*r_a;
+
+  Inverse_matrix2D(M, M_inv);
+
+  // Stiffness Matrix
+  vector<vector<su2double> > K(2,vector<su2double>(2,0.0));
+  K[0][0] = (w_h/w_a)*(w_h/w_a);
+  K[0][1] = 0.0;
+  K[1][0] = 0.0;
+  K[1][1] = r_a*r_a;
+
+   // Stiffness Matrix
+  vector<vector<su2double> > T(2,vector<su2double>(2,0.0));
+  T[0][0] = 2*xi[0]*(w_h/w_a)*(w_h/w_a);
+  T[0][1] = 0.0;
+  T[1][0] = 0.0;
+  T[1][1] = 2*xi[1]*r_a*r_a;
+
+  vector<vector<su2double> > AK(2,vector<su2double>(2,0.0));
+  vector<vector<su2double> > AT(2,vector<su2double>(2,0.0));
+ 
+  for (int i=0; i<2; i++) {
+  for (int j=0; j<2; j++) {
+    for (int k=0; k<2; k++) {
+      AK[i][j] += M_inv[i][k]* K[k][j];
+      AT[i][j] += M_inv[i][k]* T[k][j];
+    }  
+  }
+  }
+
+  Kdofs[0][2] = -1.0;
+  Kdofs[1][3] = -1.0;
+
+  Kdofs[2][0] = AK[0][0];
+  Kdofs[2][1] = AK[0][1];
+  Kdofs[3][0] = AK[1][0];
+  Kdofs[3][1] = AK[1][1];
+
+  Kdofs[2][2] = AT[0][0];
+  Kdofs[2][3] = AT[0][1];
+  Kdofs[3][2] = AT[1][0];
+  Kdofs[3][3] = AT[1][1];
+
+
+  /*--- Get simualation period from config file ---*/
+  su2double Period = config->GetHarmonicBalance_Period();
+
+  /*--- Non-dimensionalize the input period, if necessary.      */
+  Period /= config->GetTime_Ref();
+
+  //su2double OmegaHB = 2 * PI_NUMBER / Period;
+  su2double OmegaHB = config->GetOmega_HB()[1];
+  //su2double OmegaHB_old = config->GetHB_frequency_old();
+
+  vector<vector<su2double>> DD(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> EE(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> DHB(NT*dofs, vector<su2double>(NT*dofs,0.0));  
+  HB_Operator_Complex(config, DD, EE, NT, OmegaHB);
+
+   for (int i=0;i<dofs;i++) {
+   for (int j=0;j<NT;j++)   {
+   for (int k=0;k<NT;k++)   {
+
+        DHB[i*NT+j][i*NT+k] = DD[j][k];
+   
+   }
+   }
+   }
+
+//
+// transform for dofs
+//
+  int position = 0;
+  vector<vector<su2double>> Q(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  vector<vector<su2double>> Qt(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for (int i=0; i<dofs; i++) {
+	for (int j=0; j<NT; j++) {
+		Q[NT*i+j][position+j*dofs] = 1;
+	}
+	position = position + 1;
+  }
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      Qt[j][i] = Q[i][j];
+    }
+  }
+//  
+  vector<vector<su2double>> DM(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  vector<vector<su2double>> DM2(NT*dofs,vector<su2double>(NT*dofs,0.0)); 
+  vector<vector<su2double>> tmp(NT*dofs,vector<su2double>(NT*dofs,0.0));  
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      for(int k=0;k<NT*dofs;k++) {
+        tmp[i][j] += DHB[i][k] * Q[k][j];
+      }
+    }
+  }
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      for(int k=0;k<NT*dofs;k++) {
+        DM[i][j] += Qt[i][k] * tmp[k][j];
+      }
+      //DM[i][j] = DM[i][j] ;
+    }
+  } 
+
+  for(int i=0;i<NT*dofs;i++) {
+      for(int j=0;j<NT*dofs;j++) {
+	  for(int k=0;k<NT*dofs;k++) {
+             DM2[i][j] += DM[i][k] * DM[k][j];
+	  }
+      }
+     // AHB[i][j] = ( AHB[i][j] * OmegaHB ) / w_alpha;
+    }
+
+
+  vector<vector<su2double>> KHB(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for(int i=0;i<NT;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  KHB[i*dofs+j][i*dofs+k] = Kdofs[j][k];
+	  }
+	  }
+	
+  }  
+  
+  vector<su2double> Force(NT*dofs,0);
+  su2double cons = vf*vf/PI_NUMBER;
+  vector<su2double> f(2,0.0);
+  vector<su2double> f_tilde(2,0.0);
+  vector<su2double> eta(NT*dofs,0.0);
+
+  vector<vector<su2double>> q(2,vector<su2double>(NT,0.0));
+  vector<vector<su2double>> q_dot(2,vector<su2double>(NT,0.0));
+//  vector<vector<su2double>> theta(2,vector<su2double>(NT,0.0));
+//  vector<vector<su2double>> theta_dot(2,vector<su2double>(NT,0.0)); 
+
+  for (int i=0;i<NT;i++){  
+    q[1][i] = config->GetHB_pitch(i);
+    q[0][i] = config->GetHB_plunge(i);
+    q_dot[1][i] = config->GetHB_pitch_rate(i)/w_alpha;
+    q_dot[0][i] = config->GetHB_plunge_rate(i)/b/w_alpha;
+ }
+
+  vector<su2double> pl_h(NT,0.0);
+  vector<su2double> pi_h(NT,0.0);
+  vector<su2double> plr_h(NT,0.0);
+  vector<su2double> pir_h(NT,0.0);
+
+  for(int i=0;i<NT;i++) { 
+  for(int j=0;j<NT;j++) { 
+
+       pl_h[i] += EE[i][j]*q[0][j];
+       pi_h[i] += EE[i][j]*q[1][j];
+
+       plr_h[i] += EE[i][j]*q_dot[0][j];
+       pir_h[i] += EE[i][j]*q_dot[1][j];  
+  }
+  }
+
+//int k = 0;
+//for(int i=0;i<NT*dofs;i+=dofs) {
+
+//        eta[i+0] = q[0][k];
+//        eta[i+1] = q[1][k];
+
+//        eta[i+2] = q_dot[0][k];
+//        eta[i+3] = q_dot[1][k];
+
+//        k += 1;
+//}
+
+  int k = 0;
+  for(int i=0;i<NT*dofs;i+=dofs) {
+
+          eta[i+0] = pl_h[k];
+          eta[i+1] = pi_h[k];
+
+          eta[i+2] = plr_h[k];
+          eta[i+3] = pir_h[k];
+
+          k += 1;
+  }
+
+  cout << "ETA" << endl;
+  for (int i=0;i<NT*dofs;i++) {
+          cout << eta[i] << endl;
+  }
+  cout << endl;
+
+  for(int i=0;i<harmonics;i++) {
+
+          cl[i] = lift[i]*cos(Alpha) + drag[i]*sin(Alpha);
+          cd[i] = -lift[i]*sin(Alpha) + drag[i]*cos(Alpha);
+        
+          cm[i] = moment[i];
+
+               cout << "Lift= " << cl[i] << " Moment= " << cm[i] << "\n" << endl; 
+  }
+
+  vector<su2double> clh(NT,0.0);
+  vector<su2double> cmh(NT,0.0);
+
+  for(int i=0;i<NT;i++) { 
+  for(int j=0;j<NT;j++) { 
+
+       clh[i] += EE[i][j]*cl[j];
+       cmh[i] += EE[i][j]*cm[j];
+        
+  }
+  }
+
+  for(int count=0;count<NT;count++){
+
+  f[0] = (-clh[count]);
+  f[1] = (2*-cmh[count]);
+
+  //f_tilde = Phi'*f
+  for (int i=0; i<2; i++) {
+    f_tilde[i] = 0;
+    for (int k=0; k<2; k++) {
+      f_tilde[i] += M_inv[i][k]*f[k]; //PHI transpose
+    }
+  }
+
+  Force[count*dofs+2] = f_tilde[0];
+  Force[count*dofs+3] = f_tilde[1];
+
+  }
+
+//////////////////////////////////////////////////////////////////////////
+
+  su2double FlutterSpeed;
+  su2double FS2;
+  su2double L2norm;
+
+  su2double vf_old = vf, vf2 = vf*vf, vf_new, ovf2 = 1.0/vf/vf, ovf3=ovf2/vf;
+  su2double OmegaHBcheck = OmegaHB/w_a;
+  su2double OmegaHBnew;
+  su2double PeriodHBnew;
+  su2double error_value, NR_error, zeta, dzeta;
+  su2double gamma = 0.00000001;
+
+  cons = 1.0/PI_NUMBER;
+
+  for (int IJK=0;IJK<1;IJK++) {
+
+  L2norm = 0.0;
+  num = 0.0;
+  den = 0.0;
+  lum = 0.0;
+  for (int i=4;i<NT*dofs;i++) {
+          
+         num2[i] = -cons*Force[i];
+         Rs[i]   = -cons*vf2*Force[i];
+         num1[i] = 0.0;
+
+  for (int j=4;j<NT*dofs;j++) {
+
+         Rs[i]   += ((OmegaHBcheck * DM[i][j] + KHB[i][j])*eta[j]);
+         num1[i] += (OmegaHBcheck * DM[i][j] * eta[j] + KHB[i][j] * eta[j]); 
+
+  }
+
+  num += (num1[i] * num1[i]);
+  lum += (num1[i] * num2[i]);
+  den += (num2[i] * num2[i]); 
+
+  L2norm += (0.5*(Rs[i]*Rs[i])); 
+
+  } 
+
+  cout << "num= " << num << " | den= " << den << " | lum= " << lum << endl;
+
+  zeta  =  -num*ovf2 + 3.0*den*vf2 + 2.0*lum;
+  dzeta = 2*num*ovf3 + 6*den*vf;
+//zeta  =  -num + 3.0*den*vf2*vf2 + 2.0*lum*vf2;
+//dzeta =  12.0*den*vf2*vf + 4.0*lum*vf;
+
+  cout << "zeta= " << zeta << " | dzeta= " << dzeta << endl;
+
+  vf_new = vf_old - 0.3*zeta/dzeta;
+
+  NR_error = (vf_new - vf_old)/vf_old;
+
+  vf_old = vf_new;
+
+  vf   = vf_new;
+  vf2  = vf*vf; 
+  ovf2 = 1.0/vf/vf;
+  ovf3 = ovf2/vf;
+
+  }
+  cout << "N-R error = " << NR_error << endl;
+ 
+  error_value = (vf_new-vf)/vf;
+////////////////////////////////////////////////////////////////////
+
+  cout << "New  VF = " << vf << " / L2NORM = " << L2norm  << endl;
+  cout << "Error in velocity calc = " << error_value << endl;
+
+  //config->SetAeroelastic_Flutter_Speed_Index(FlutterSpeed);
+ 
+  if ((abs(error_value) < 0.0000001 || vf < 0.01)&&(abs(L2norm) < 0.00000000000001)) {error_flag = true;} 
+
+  config->SetStr_L2_norm(L2norm);
+
+  config->SetAeroelastic_Flutter_Speed_Index(vf);
+  
+}
+
+void CSolver::Frequency_Velocity_Update_2D(CConfig *config, su2double* lift, su2double* drag, su2double* moment, int harmonics, bool &error_flag) {
+
+  int NT = harmonics, NH = (NT-1)/2, dofs = 2;
+  vector<su2double> num1(NT*dofs,0);
+  vector<su2double> num2(NT*dofs,0);
+  vector<su2double> Rs(NT*dofs,0);
+  
+  vector<su2double> cl(NT,0);
+  vector<su2double> cd(NT,0); 
+  vector<su2double> cm(NT,0);
+  su2double num = 0.0;
+  su2double den = 0.0;
+   /*--- Retrieve values from the config file ---*/
+  su2double w_h = config->GetAeroelastic_Frequency_Plunge();
+  su2double w_a = config->GetAeroelastic_Frequency_Pitch();
+  su2double x_a = config->GetAeroelastic_CG_Location();
+  su2double r_a = sqrt(config->GetAeroelastic_Radius_Gyration_Squared());
+  su2double mu  = config->GetAeroelastic_Airfoil_Mass_Ratio();
+
+  su2double Uinf = config->GetVelocity_FreeStream()[0];
+  su2double wr  = w_h/w_a;
+  su2double w_alpha = w_a;
+//  su2double w_alpha = config->GetAeroelastic_Frequency_Pitch();
+  su2double vf      = config->GetAeroelastic_Flutter_Speed_Index();
+  su2double b       = config->GetLength_Reynolds()/2.0; // airfoil semichord, Reynolds length is by defaul 1.0
+  su2double Alpha   = config->GetAoA()*PI_NUMBER/180.0;
+  unsigned long TimeIter = config->GetTimeIter();
+ 
+  vector<su2double> xi(2,0.0);
+//x[0] = 0.00038;
+//x[1] = 0.00013;
+//
+  cout << "Updating Frequency & Velocity" << endl;
+  //
+ // vector<vector<su2double>> Kdofs(dofs, vector<su2double>(dofs,0.0));
+// Mass Matrix
+  vector<vector<su2double> > M(2,vector<su2double>(2,0.0));
+  vector<vector<su2double> > M_inv(2,vector<su2double>(2,0.0)); 
+  M[0][0] = 1;
+  M[0][1] = x_a;
+  M[1][0] = x_a;
+  M[1][1] = r_a*r_a;
+
+  Inverse_matrix2D(M, M_inv);
+
+  // Stiffness Matrix
+  vector<vector<su2double> > K(2,vector<su2double>(2,0.0));
+  K[0][0] = (w_h/w_a)*(w_h/w_a);
+  K[0][1] = 0.0;
+  K[1][0] = 0.0;
+  K[1][1] = r_a*r_a;
+
+   // Stiffness Matrix
+  vector<vector<su2double> > T(2,vector<su2double>(2,0.0));
+  T[0][0] = 2*xi[0]*(w_h/w_a)*(w_h/w_a);
+  T[0][1] = 0.0;
+  T[1][0] = 0.0;
+  T[1][1] = 2*xi[1]*r_a*r_a;
+
+  vector<vector<su2double> > AK(2,vector<su2double>(2,0.0));
+  vector<vector<su2double> > AT(2,vector<su2double>(2,0.0));
+ 
+  for (int i=0; i<2; i++) {
+  for (int j=0; j<2; j++) {
+    for (int k=0; k<2; k++) {
+      AK[i][j] += M_inv[i][k]* K[k][j];
+      AT[i][j] += M_inv[i][k]* T[k][j];
+    }  
+  }
+  }
+
+  /*--- Get simualation period from config file ---*/
+  su2double Period = config->GetHarmonicBalance_Period();
+
+  /*--- Non-dimensionalize the input period, if necessary.      */
+  Period /= config->GetTime_Ref();
+
+  //su2double OmegaHB = 2 * PI_NUMBER / Period;
+  su2double OmegaHB = config->GetOmega_HB()[1];
+  //su2double OmegaHB_old = config->GetHB_frequency_old();
+
+  vector<vector<su2double>> DD(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> EE(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> DHB(NT*dofs, vector<su2double>(NT*dofs,0.0));  
+  HB_Operator(config, DD, EE, NT, OmegaHB);
+
+   for (int i=0;i<dofs;i++) {
+   for (int j=0;j<NT;j++)   {
+   for (int k=0;k<NT;k++)   {
+
+        DHB[i*NT+j][i*NT+k] = DD[j][k];
+   
+   }
+   }
+   }
+
+//
+// transform for dofs
+//
+  int position = 0;
+  vector<vector<su2double>> Q(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  vector<vector<su2double>> Qt(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for (int i=0; i<dofs; i++) {
+	for (int j=0; j<NT; j++) {
+		Q[NT*i+j][position+j*dofs] = 1;
+	}
+	position = position + 1;
+  }
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      Qt[j][i] = Q[i][j];
+    }
+  }
+//  
+  vector<vector<su2double>> DM(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  vector<vector<su2double>> DM2(NT*dofs,vector<su2double>(NT*dofs,0.0)); 
+  vector<vector<su2double>> tmp(NT*dofs,vector<su2double>(NT*dofs,0.0));  
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      for(int k=0;k<NT*dofs;k++) {
+        tmp[i][j] += DHB[i][k] * Q[k][j];
+      }
+    }
+  }
+  for(int i=0;i<NT*dofs;i++) {
+    for(int j=0;j<NT*dofs;j++) {
+      for(int k=0;k<NT*dofs;k++) {
+        DM[i][j] += Qt[i][k] * tmp[k][j];
+      }
+      //DM[i][j] = DM[i][j] ;
+    }
+  } 
+
+  for(int i=0;i<NT*dofs;i++) {
+      for(int j=0;j<NT*dofs;j++) {
+	  for(int k=0;k<NT*dofs;k++) {
+             DM2[i][j] += DM[i][k] * DM[k][j];
+	  }
+      }
+     // AHB[i][j] = ( AHB[i][j] * OmegaHB ) / w_alpha;
+    }
+
+
+  vector<vector<su2double>> KHB(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for(int i=0;i<NT;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  KHB[i*dofs+j][i*dofs+k] = AK[j][k];
+	  }
+	  }
+	
+  }  
+  vector<vector<su2double>> THB(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for(int i=0;i<NT;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  THB[i*dofs+j][i*dofs+k] = AT[j][k];
+	  }
+	  }
+	
+  }  
+
+  vector<su2double> Force(NT*dofs,0);
+  su2double cons = vf*vf/PI_NUMBER;
+  vector<su2double> f(2,0.0);
+  vector<su2double> f_tilde(2,0.0);
+  vector<su2double> eta(NT*dofs,0.0);
+
+  vector<vector<su2double>> q(2,vector<su2double>(NT,0.0));
+//  vector<vector<su2double>> q_dot(2,vector<su2double>(NT,0.0));
+//  vector<vector<su2double>> theta(2,vector<su2double>(NT,0.0));
+//  vector<vector<su2double>> theta_dot(2,vector<su2double>(NT,0.0)); 
+
+  for (int i=0;i<NT;i++){  
+    q[1][i] = config->GetHB_pitch(i);
+    q[0][i] = config->GetHB_plunge(i);
+ }
+
+  int k = 0;
+  for(int i=0;i<NT*dofs;i+=dofs) {
+
+          eta[i+0] = q[0][k];
+          eta[i+1] = q[1][k];
+
+          k += 1;
+  }
+
+//for(int i=0;i<NT*dofs;i++) {
+
+//    eta[i] = config->GetHB_displacements(i);
+
+//}
+
+  cout << "ETA" << endl;
+  for (int i=0;i<NT*dofs;i++) {
+          cout << eta[i] << endl;
+  }
+  cout << endl;
+
+  for(int i=0;i<harmonics;i++) {
+
+          cl[i] = lift[i]*cos(Alpha) + drag[i]*sin(Alpha);
+          cd[i] = -lift[i]*sin(Alpha) + drag[i]*cos(Alpha);
+        
+          cm[i] = moment[i];
+
+  }
+
+//for(int i=0;i<NT*dofs;i++) {
+
+//    Force[i] = config->GetHB_forces(i);
+
+//}
+
+  cout << "LIFT    /    MOMENT" << endl;
+  for(int count=0;count<NT;count++){
+
+               cout  << cl[count] << " " << cm[count] << "\n" << endl; 
+
+  f[0] = (-cl[count]);
+  f[1] = (2*-cm[count]);
+
+  //f_tilde = Phi'*f
+  for (int i=0; i<2; i++) {
+    f_tilde[i] = 0;
+    for (int k=0; k<2; k++) {
+      f_tilde[i] += (M_inv[i][k]*f[k]); //PHI transpose
+    }
+  }
+
+  Force[count*dofs+0] = f_tilde[0];
+  Force[count*dofs+1] = f_tilde[1];
+
+  }
+//
+//////////////////////////////////////////////////////////////////////////
+//
+  su2double FlutterSpeed;
+  su2double FS2;
+  su2double L2norm;
+
+  su2double vf_old = vf, vf_new;
+
+  su2double w_t  = OmegaHB/w_a;
+  su2double w2_t = w_t*w_t, vf2 = vf*vf;
+
+  su2double OmegaHBcheck;
+  su2double OmegaHBnew;
+  su2double PeriodHBnew;
+  su2double error_value, error_value_vf;
+
+  for (int IKL=0;IKL<1;IKL++) {
+
+  cons = 1.0/PI_NUMBER;
+  L2norm = 0.0;
+  num = 0.0;
+  den = 0.0;
+  for (int i=0;i<NT*dofs;i++) {
+          
+         num1[i] = -cons*vf2*Force[i];
+         Rs[i]   = -cons*vf2*Force[i];
+         num2[i] = 0.0;
+
+  for (int j=0;j<NT*dofs;j++) {
+
+         Rs[i]   += ( (w2_t*DM2[i][j] + KHB[i][j])*eta[j] );
+         num1[i] += (KHB[i][j] * eta[j]); 
+         num2[i] += (DM2[i][j] * eta[j]);
+
+  }
+
+
+  num += (num1[i] * num2[i]);
+  den += (num2[i] * num2[i]); 
+
+  L2norm += (0.5*(Rs[i]*Rs[i])); 
+
+  } 
+
+  OmegaHBcheck = -num/den;
+//w2_t = OmegaHBcheck;
+
+  num = 0.0;
+  den = 0.0;
+  for (int i=0;i<NT*dofs;i++) {
+          
+         num1[i] = 0.0;
+         num2[i] = -cons*Force[i];
+
+  for (int j=0;j<NT*dofs;j++) {
+
+         num1[i] += (w2_t * DM2[i][j] * eta[j] + KHB[i][j] * eta[j]);
+         
+  }
+
+////num += (Force[i] * num1[i]);
+////den += (Force[i] * Force[i]); 
+  num += (num2[i] * num1[i]);
+  den += (num2[i] * num2[i]); 
+
+  } 
+
+  FS2 = -num/den;
+
+  vf_new = sqrt(FS2);
+  w_t    = w_a*sqrt(OmegaHBcheck);
+
+  OmegaHBnew = OmegaHB + 0.3*(w_t - OmegaHB);
+  vf         = vf_old + 0.3*(vf_new - vf_old);
+  //OmegaHBnew   = w_t;
+  //vf           = 2.0*vs/sqrt(mu);
+
+  PeriodHBnew  = 2*PI_NUMBER/OmegaHBnew;
+  FlutterSpeed = vf;
+  error_value  = (OmegaHBnew - OmegaHB)/OmegaHB;
+  error_value_vf  = (vf_new - vf_old)/vf_old;
+//cout <<  "OmegaHB= " << OmegaHBnew << endl;  
+//cout <<  "Vf= " << vf << endl;  
+
+  }
+//su2double NR_error, zeta, dzeta, vf_new;
+//su2double gamma = 0.0000001;
+
+
+//for (int IJK=0;IJK<10;IJK++) {
+//L2norm = 0.0;
+//num = 0.0;
+//den = 0.0;
+//for (int i=0;i<NT*dofs;i++) {
+//        
+//       num2[i] = -cons*Force[i];
+//       Rs[i]   = -cons*vf2*Force[i];
+//       num1[i] = 0.0;
+
+//for (int j=0;j<NT*dofs;j++) {
+
+//       Rs[i]   += ((OmegaHBcheck * DM2[i][j] + KHB[i][j])*eta[j]);
+//       num1[i] += (OmegaHBcheck * DM2[i][j] * eta[j] + KHB[i][j] * eta[j]); 
+//       //num2[i] += (DM2[i][j] * eta[j]);
+
+//}
+
+//num += (num1[i] * num2[i]);
+//den += (num2[i] * num2[i]); 
+
+//L2norm += (0.5*(Rs[i]*Rs[i])); 
+
+//} 
+
+////gamma = L2norm;
+
+//zeta  = den*vf2*vf2*vf + num*vf2*vf - gamma;
+//dzeta = 5*den*vf2*vf + 3*num*vf2;
+
+//vf_new = vf_old - zeta/dzeta;
+
+//vf2 = -num/den;
+//vf  = sqrt(vf2);
+//NR_error = (vf_new - vf_old)/vf_old;
+
+//}
+//cout << "N-R error = " << NR_error << endl;
+//
+//error_value = (vf_new-vf)/vf;
+//vf = vf_new;
+
+//w_t = w_a*sqrt(OmegaHBcheck);
+
+//OmegaHBnew   = w_t;
+////vf           = 2.0*vs/sqrt(mu);
+
+//PeriodHBnew  = 2*PI_NUMBER/OmegaHBnew;
+//FlutterSpeed = vf;
+//error_value  = (OmegaHBnew - OmegaHB)/OmegaHB;
+//cout <<  "OmegaHB= " << OmegaHBnew << endl;  
+//cout <<  "Vf= " << vf << endl;  
+
+
+//su2double num11=0.0, num12=0.0, num21=0.0, num22=0.0, den11=0.0, den22=0.0;
+//cons = vf*vf/PI_NUMBER;
+//L2norm = 0.0;
+//num = 0.0;
+//den = 0.0;
+
+//for (int i=0;i<NT*dofs;i++) {
+//        
+//       num1[i] = 0.0;
+//       Rs[i]   = -cons*Force[i];
+//       num2[i] = 0.0;
+
+//for (int j=0;j<NT*dofs;j++) {
+
+//       Rs[i]   += ((OmegaHB * OmegaHB * DM2[i][j]/w_a/w_a + KHB[i][j])*eta[j]);
+//       num2[i] += (KHB[i][j] * eta[j]); 
+//       num1[i] += (DM2[i][j] * eta[j]);
+
+//}
+
+//num11 += (num1[i] * num1[i]);
+//num21 += (num1[i] * Force[i]); 
+
+//num12 += (num1[i] * Force[i]);
+//num22 += (Force[i] * Force[i]);  
+
+//den11 += (num1[i]*num2[i]);
+//den22 += (Force[i]*num2[i]);
+
+//L2norm += (0.5*(Rs[i]*Rs[i])); 
+
+//}
+
+//vector<su2double> OmegaSol(2,0.0);
+//vector<vector<su2double> > AS(2,vector<su2double>(3,0.0));
+
+//AS[0][0] =  num11;
+//AS[1][0] = -num21;
+//AS[0][1] = -num12/PI_NUMBER;
+//AS[1][1] =  num22/PI_NUMBER;
+
+//AS[0][2] = -den11;
+//AS[1][2] =  den22;
+
+//Gauss_Elimination(AS, OmegaSol);
+
+//OmegaHBnew   = w_a*sqrt(OmegaSol[0]);
+//FlutterSpeed = sqrt(OmegaSol[1]);
+//PeriodHBnew  = 2*PI_NUMBER/OmegaHBnew;
+//error_value  = (OmegaHBnew - OmegaHB)/OmegaHB;
+//
+////////////////////////////////////////////////////////////////////
+//
+//
+  cout << "New HB Omega = " << (OmegaHBnew) << " / L2NORM = " << L2norm << " / Vf = " << FlutterSpeed << endl;
+  cout << "Error in omega calc = " << error_value << endl;
+  cout << "Error in VF calc = " << error_value_vf << endl;
+ 
+  if ((abs(error_value) < 0.0000001 || OmegaHBnew < 0.001)&&(abs(L2norm) < 0.00000000000001)) {error_flag = true;} 
+
+  config->SetHarmonicBalance_Period(PeriodHBnew);
+
+  config->SetStr_L2_norm(L2norm);
+
+  config->SetAeroelastic_Flutter_Speed_Index(FlutterSpeed);
+
+  config->SetOmega_HB(0.0, 0);
+  for (int i=1;i<NH+1;i++)  
+    config->SetOmega_HB(i*OmegaHBnew, i);
+
+  for (int i=1;i<NH+1;i++)  
+    config->SetOmega_HB(-i*OmegaHBnew, NH + i);
+
+}
+
+void CSolver::Frequency_Update_2D2(CConfig *config, su2double* lift, su2double* drag, su2double* moment, int harmonics, bool &error_flag) {
+
+  int NT = harmonics, NH = (NT-1)/2, dofs = 2;
+  vector<su2double> num1(NT*dofs,0);
+  vector<su2double> num2(NT*dofs,0);
+  vector<su2double> Rs(NT*dofs,0);
+  
+  vector<su2double> cl(NT,0);
+  vector<su2double> cd(NT,0); 
+  vector<su2double> cm(NT,0);
+  vector<su2double> clh(NT,0);
+  vector<su2double> cdh(NT,0); 
+  vector<su2double> cmh(NT,0);
+ 
+  su2double num = 0.0;
+  su2double den = 0.0;
+   /*--- Retrieve values from the config file ---*/
+  su2double w_h = config->GetAeroelastic_Frequency_Plunge();
+  su2double w_a = config->GetAeroelastic_Frequency_Pitch();
+  su2double x_a = config->GetAeroelastic_CG_Location();
+  su2double r_a = sqrt(config->GetAeroelastic_Radius_Gyration_Squared());
+  su2double mu       = config->GetAeroelastic_Airfoil_Mass_Ratio();
+  su2double wr  = w_h/w_a;
+  su2double w_alpha = w_a;
+  su2double Uinf = config->GetVelocity_FreeStream()[0];
+//  su2double w_alpha = config->GetAeroelastic_Frequency_Pitch();
+  su2double vf      = config->GetAeroelastic_Flutter_Speed_Index();
+  su2double b       = config->GetLength_Reynolds()/2.0; // airfoil semichord, Reynolds length is by defaul 1.0
+  su2double Alpha   = config->GetAoA()*PI_NUMBER/180.0;
+  unsigned long TimeIter = config->GetTimeIter();
+ 
+  vector<su2double> xi(2,0.0);
+
+//
+  cout << "Updating Frequency (new)" << endl;
+  //
+ // vector<vector<su2double>> Kdofs(dofs, vector<su2double>(dofs,0.0));
+// Mass Matrix
+  vector<vector<su2double> > M(2,vector<su2double>(2,0.0));
+  vector<vector<su2double> > M_inv(2,vector<su2double>(2,0.0)); 
+  M[0][0] = 1;
+  M[0][1] = x_a;
+  M[1][0] = x_a;
+  M[1][1] = r_a*r_a;
+
+  Inverse_matrix2D(M, M_inv);
+
+  // Stiffness Matrix
+  vector<vector<su2double> > K(2,vector<su2double>(2,0.0));
+  K[0][0] = (w_h/w_a)*(w_h/w_a);
+  K[0][1] = 0.0;
+  K[1][0] = 0.0;
+  K[1][1] = r_a*r_a;
+
+   // Stiffness Matrix
+  vector<vector<su2double> > T(2,vector<su2double>(2,0.0));
+  T[0][0] = 2*xi[0]*(w_h/w_a)*(w_h/w_a);
+  T[0][1] = 0.0;
+  T[1][0] = 0.0;
+  T[1][1] = 2*xi[1]*r_a*r_a;
+
+  /*--- Get simualation period from config file ---*/
+  su2double Period = config->GetHarmonicBalance_Period();
+
+  /*--- Non-dimensionalize the input period, if necessary.      */
+  Period /= config->GetTime_Ref();
+
+  //su2double OmegaHB = 2 * PI_NUMBER / Period;
+  su2double OmegaHB = config->GetOmega_HB()[1];
+  //su2double OmegaHB_old = config->GetHB_frequency_old();
+
+  vector<vector<su2double>> DD(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> EE(NT, vector<su2double>(NT,0.0));
+  HB_Operator(config, DD, EE, NT, OmegaHB);
+
+//
+
+
+  vector<vector<su2double>> KHB(4,vector<su2double>(4,0.0));
+  for(int i=0;i<2;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  KHB[i*dofs+j][i*dofs+k] = K[j][k];
+	  }
+	  }
+	
+  }  
+  vector<vector<su2double>> MHB(4,vector<su2double>(4,0.0));
+  for(int i=0;i<2;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  MHB[i*dofs+j][i*dofs+k] = M[j][k];
+	  }
+	  }
+	
+  }  
+  vector<su2double> Force(4,0);
+  vector<su2double> eta(4,0.0);
+
+  vector<vector<su2double>> q(2,vector<su2double>(NT,0.0));
+  vector<vector<su2double>> qh(2,vector<su2double>(NT,0.0));
+  for (int i=0;i<NT;i++){  
+    q[1][i] = config->GetHB_pitch(i);
+    q[0][i] = config->GetHB_plunge(i);
+  }
+
+ for (int i=0;i<NT;i++){  
+ for (int j=0;j<NT;j++){  
+    qh[0][i] += (EE[i][j]*q[0][j]);
+    qh[1][i] += (EE[i][j]*q[1][j]);
+ } 
+ }
+
+          eta[0] = qh[0][2];
+          eta[1] = qh[1][2];
+          eta[2] = qh[0][1];
+          eta[3] = qh[1][1];
+
+  cout << "ETA" << endl;
+  for (int i=0;i<4;i++) {
+          cout << eta[i] << endl;
+  }
+  cout << endl;
+
+  for(int i=0;i<harmonics;i++) {
+
+          cl[i] = lift[i]*cos(Alpha) + drag[i]*sin(Alpha);
+          cd[i] = -lift[i]*sin(Alpha) + drag[i]*cos(Alpha);
+        
+          cm[i] = moment[i];
+
+  }
+
+  for (int i=0;i<NT;i++){  
+  for (int j=0;j<NT;j++){  
+    clh[i] += (EE[i][j]*cl[j]);
+    cmh[i] += (EE[i][j]*cm[j]);
+  } 
+  }
+
+          Force[0] = -clh[2];
+          Force[1] = -2*cmh[2];
+          Force[2] = -clh[1];
+          Force[3] = -2*cmh[1];
+
+  cout << "LIFT    /    MOMENT" << endl;
+  for(int count=0;count<NT;count++){
+
+               cout  << cl[count] << " " << cm[count] << "\n" << endl; 
+
+  }
+//
+//////////////////////////////////////////////////////////////////////////
+//
+  su2double FlutterSpeed = vf;
+  su2double L2norm;
+
+  su2double vf_t = vf*sqrt(mu)/2.0;
+  su2double Omega_t = OmegaHB/Uinf;
+
+  su2double OmegaHBnew, OmegaCheck;
+  su2double PeriodHBnew;
+  su2double error_value;
+
+  su2double cons = 4.0/PI_NUMBER/mu;
+
+  L2norm = 0.0;
+  num = 0.0;
+  den = 0.0;
+  for (int i=0;i<4;i++) {
+          
+         num1[i] = -cons*Force[i];
+         Rs[i]   = -cons*Force[i];
+         num2[i] = 0.0;
+
+  for (int j=0;j<4;j++) {
+
+         Rs[i]   += ( (-Omega_t * Omega_t * MHB[i][j] + KHB[i][j]/vf_t/vf_t) *eta[j] );
+         num1[i] += (KHB[i][j] * eta[j]/vf_t/vf_t); 
+         num2[i] += (MHB[i][j] * eta[j]);
+
+  }
+
+
+  num += (num1[i] * num2[i]);
+  den += (num2[i] * num2[i]); 
+
+  L2norm += (0.5*(Rs[i]*Rs[i])); 
+
+  } 
+
+  OmegaCheck  = num/den;
+  Omega_t     = sqrt(OmegaCheck);
+  OmegaHBnew  = Uinf*Omega_t;
+  PeriodHBnew = 2*PI_NUMBER/OmegaHBnew;
+  error_value = (OmegaHBnew - OmegaHB)/OmegaHB;
+  cout <<  "OmegaHB= " << OmegaHBnew << endl;  
+
+
+///////////////////////////////////////////////////////////////////////////////////////////  
+  
+  cout << "New HB Omega = " << (OmegaHBnew) << " / L2NORM = " << L2norm << " / Vf = " << FlutterSpeed << endl;
+  cout << "Error in omega calc = " << error_value << endl;
+
+  //config->SetAeroelastic_Flutter_Speed_Index(FlutterSpeed);
+ 
+  if ((abs(error_value) < 0.0000001 || OmegaHBnew < 0.001)&&(abs(L2norm) < 0.00000000000001)) {error_flag = true;} 
+
+  config->SetHarmonicBalance_Period(PeriodHBnew);
+
+  config->SetStr_L2_norm(L2norm);
+
+  config->SetOmega_HB(0.0, 0);
+  for (int i=1;i<NH+1;i++)  
+    config->SetOmega_HB(i*OmegaHBnew, i);
+
+  for (int i=1;i<NH+1;i++)  
+    config->SetOmega_HB(-i*OmegaHBnew, NH + i);
+
+}
+
+void CSolver::Frequency_Velocity_Update_2D2(CConfig *config, su2double* lift, su2double* drag, su2double* moment, int harmonics, bool &error_flag) {
+
+  int NT = harmonics, NH = (NT-1)/2, dofs = 2;
+  vector<su2double> num1(NT*dofs,0);
+  vector<su2double> num2(NT*dofs,0);
+  vector<su2double> Rs(NT*dofs,0);
+  
+  vector<su2double> cl(NT,0);
+  vector<su2double> cd(NT,0); 
+  vector<su2double> cm(NT,0);
+  vector<su2double> clh(NT,0);
+  vector<su2double> cdh(NT,0); 
+  vector<su2double> cmh(NT,0);
+ 
+  su2double num = 0.0;
+  su2double den = 0.0;
+  su2double lum = 0.0;
+   /*--- Retrieve values from the config file ---*/
+  su2double w_h = config->GetAeroelastic_Frequency_Plunge();
+  su2double w_a = config->GetAeroelastic_Frequency_Pitch();
+  su2double x_a = config->GetAeroelastic_CG_Location();
+  su2double r_a = sqrt(config->GetAeroelastic_Radius_Gyration_Squared());
+  su2double mu       = config->GetAeroelastic_Airfoil_Mass_Ratio();
+  su2double wr  = w_h/w_a;
+  su2double w_alpha = w_a;
+  su2double Uinf = config->GetVelocity_FreeStream()[0];
+//  su2double w_alpha = config->GetAeroelastic_Frequency_Pitch();
+  su2double vf      = config->GetAeroelastic_Flutter_Speed_Index();
+  su2double b       = config->GetLength_Reynolds()/2.0; // airfoil semichord, Reynolds length is by defaul 1.0
+  su2double Alpha   = config->GetAoA()*PI_NUMBER/180.0;
+  unsigned long TimeIter = config->GetTimeIter();
+ 
+  vector<su2double> xi(2,0.0);
+
+//
+  cout << "Updating Frequency & Velocity (new)" << endl;
+  //
+ // vector<vector<su2double>> Kdofs(dofs, vector<su2double>(dofs,0.0));
+// Mass Matrix
+  vector<vector<su2double> > M(2,vector<su2double>(2,0.0));
+  vector<vector<su2double> > M_inv(2,vector<su2double>(2,0.0)); 
+  M[0][0] = 1;
+  M[0][1] = x_a;
+  M[1][0] = x_a;
+  M[1][1] = r_a*r_a;
+
+  Inverse_matrix2D(M, M_inv);
+
+  // Stiffness Matrix
+  vector<vector<su2double> > K(2,vector<su2double>(2,0.0));
+  K[0][0] = (w_h/w_a)*(w_h/w_a);
+  K[0][1] = 0.0;
+  K[1][0] = 0.0;
+  K[1][1] = r_a*r_a;
+
+   // Stiffness Matrix
+  vector<vector<su2double> > T(2,vector<su2double>(2,0.0));
+  T[0][0] = 2*xi[0]*(w_h/w_a)*(w_h/w_a);
+  T[0][1] = 0.0;
+  T[1][0] = 0.0;
+  T[1][1] = 2*xi[1]*r_a*r_a;
+
+  /*--- Get simualation period from config file ---*/
+  su2double Period = config->GetHarmonicBalance_Period();
+
+  /*--- Non-dimensionalize the input period, if necessary.      */
+  Period /= config->GetTime_Ref();
+
+  //su2double OmegaHB = 2 * PI_NUMBER / Period;
+  su2double OmegaHB = config->GetOmega_HB()[1];
+  //su2double OmegaHB_old = config->GetHB_frequency_old();
+
+  vector<vector<su2double>> DD(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> EE(NT, vector<su2double>(NT,0.0));
+  HB_Operator(config, DD, EE, NT, OmegaHB);
+
+//
+
+
+  vector<vector<su2double>> KHB(4,vector<su2double>(4,0.0));
+  for(int i=0;i<2;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  KHB[i*dofs+j][i*dofs+k] = K[j][k];
+	  }
+	  }
+	
+  }  
+  vector<vector<su2double>> MHB(4,vector<su2double>(4,0.0));
+  for(int i=0;i<2;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  MHB[i*dofs+j][i*dofs+k] = M[j][k];
+	  }
+	  }
+	
+  }  
+  vector<su2double> Force(4,0);
+  vector<su2double> eta(4,0.0);
+
+  vector<vector<su2double>> q(2,vector<su2double>(NT,0.0));
+  vector<vector<su2double>> qh(2,vector<su2double>(NT,0.0));
+  for (int i=0;i<NT;i++){  
+    q[1][i] = config->GetHB_pitch(i);
+    q[0][i] = config->GetHB_plunge(i);
+  }
+
+ for (int i=0;i<NT;i++){  
+ for (int j=0;j<NT;j++){  
+    qh[0][i] += (EE[i][j]*q[0][j]);
+    qh[1][i] += (EE[i][j]*q[1][j]);
+ } 
+ }
+
+          eta[0] = qh[0][2];
+          eta[1] = qh[1][2];
+          eta[2] = qh[0][1];
+          eta[3] = qh[1][1];
+
+  cout << "ETA" << endl;
+  for (int i=0;i<4;i++) {
+          cout << eta[i] << endl;
+  }
+  cout << endl;
+
+  for(int i=0;i<harmonics;i++) {
+
+          cl[i] = lift[i]*cos(Alpha) + drag[i]*sin(Alpha);
+          cd[i] = -lift[i]*sin(Alpha) + drag[i]*cos(Alpha);
+        
+          cm[i] = moment[i];
+
+  }
+
+  for (int i=0;i<NT;i++){  
+  for (int j=0;j<NT;j++){  
+    clh[i] += (EE[i][j]*cl[j]);
+    cmh[i] += (EE[i][j]*cm[j]);
+  } 
+  }
+
+          Force[0] = -clh[2];
+          Force[1] = -2*cmh[2];
+          Force[2] = -clh[1];
+          Force[3] = -2*cmh[1];
+
+  cout << "LIFT    /    MOMENT" << endl;
+  for(int count=0;count<NT;count++){
+
+               cout  << cl[count] << " " << cm[count] << "\n" << endl; 
+
+  }
+//
+//////////////////////////////////////////////////////////////////////////
+//
+  su2double FlutterSpeed;
+  su2double FS2;
+  su2double L2norm;
+
+  su2double vf_t = vf*sqrt(mu)/2.0;
+  su2double Omega_t = OmegaHB/Uinf;
+//  su2double vf_t = vf;
+//  su2double Omega_t = OmegaHB/w_a;
+
+  su2double OmegaHBnew, OmegaCheck = Omega_t*Omega_t, vf2_t = vf_t*vf_t;
+  su2double PeriodHBnew;
+  su2double error_value;
+
+  su2double cons = 4.0/PI_NUMBER/mu;
+  //su2double cons = 1.0/PI_NUMBER;
+
+  for (int IKL=0;IKL<1;IKL++) {
+
+  L2norm = 0.0;
+  num = 0.0;
+  den = 0.0;
+  for (int i=0;i<4;i++) {
+          
+         num1[i] = -cons*Force[i];
+         Rs[i]   = -cons*Force[i];
+         num2[i] = 0.0;
+
+  for (int j=0;j<4;j++) {
+
+      Rs[i]   += ( (-Omega_t * Omega_t * MHB[i][j] + KHB[i][j]/vf2_t) *eta[j] );
+         //Rs[i]   += ( (-OmegaCheck * vf2_t * MHB[i][j] + KHB[i][j]) *eta[j] );
+         num1[i] += (KHB[i][j] * eta[j]/vf2_t); 
+         num2[i] += (MHB[i][j] * eta[j]);
+
+  }
+
+
+  num += (num1[i] * num2[i]);
+  den += (num2[i] * num2[i]); 
+
+  L2norm += (0.5*(Rs[i]*Rs[i])); 
+
+  } 
+
+//  cout << "NUM= " << num << " DEN= " << den << endl;
+  OmegaCheck  = num/den;
+  Omega_t     = sqrt(OmegaCheck);
+  //Omega_t     = w_a*sqrt(OmegaCheck);
+
+  num = 0.0;
+  den = 0.0;
+  for (int i=0;i<4;i++) {
+          
+         num2[i] = -cons*Force[i];
+	 num1[i] = 0.0;
+
+  for (int j=0;j<4;j++) {
+
+     //    num1[i] += ( -OmegaCheck * MHB[i][j] * eta[j]); 
+         //num1[i] += ( -OmegaCheck * MHB[i][j] * eta[j] +  KHB[i][j] * eta[j]);
+         num1[i] += ( KHB[i][j] * eta[j] );
+	 num2[i] += ( -OmegaCheck * MHB[i][j] * eta[j] );
+  }
+
+  num += (num1[i] * num2[i]);
+  den += (num1[i] * num1[i]); 
+
+  } 
+  //cout << "NUM= " << num << " DEN= " << den << endl;
+  FS2  = -num/den;
+  
+  vf_t = 1.0/sqrt(FS2);
+//  vf_t = sqrt(FS2);
+  vf   = 2.0*vf_t/sqrt(mu);
+
+  OmegaHBnew  = Omega_t*Uinf;
+//
+//  OmegaHBnew  = Omega_t;
+  PeriodHBnew = 2*PI_NUMBER/OmegaHBnew;
+  error_value = (OmegaHBnew - OmegaHB)/OmegaHB;
+  cout <<  "OmegaHB= " << OmegaHBnew << endl;  
+  cout <<  "Vf= " << vf  << endl;  
+  FlutterSpeed = vf;
+
+  }
+
+///////////////////////////////////////////////////////////////////////////////////////////  
+  
+  cout << "New HB Omega = " << (OmegaHBnew) << " / L2NORM = " << L2norm << " / Vf = " << FlutterSpeed << endl;
+  cout << "Error in omega calc = " << error_value << endl;
+
+  //config->SetAeroelastic_Flutter_Speed_Index(FlutterSpeed);
+ 
+  if ((abs(error_value) < 0.0000001 || OmegaHBnew < 0.001)&&(abs(L2norm) < 0.00000000000001)) {error_flag = true;} 
+
+  config->SetHarmonicBalance_Period(PeriodHBnew);
+
+  config->SetStr_L2_norm(L2norm);
+
+  config->SetAeroelastic_Flutter_Speed_Index(FlutterSpeed);
+
+  config->SetOmega_HB(0.0, 0);
+  for (int i=1;i<NH+1;i++)  
+    config->SetOmega_HB(i*OmegaHBnew, i);
+
+  for (int i=1;i<NH+1;i++)  
+    config->SetOmega_HB(-i*OmegaHBnew, NH + i);
+
+}
+
+void CSolver::Frequency_Velocity_Update_2D4(CConfig *config, su2double* lift, su2double* drag, su2double* moment, int harmonics, bool &error_flag) {
+
+  int NT = harmonics, NH = (NT-1)/2, dofs = 2;
+  vector<su2double> num1(NT*dofs,0);
+  vector<su2double> num2(NT*dofs,0);
+  vector<su2double> Rs(NT*dofs,0);
+  
+  vector<su2double> cl(NT,0);
+  vector<su2double> cd(NT,0); 
+  vector<su2double> cm(NT,0);
+  vector<su2double> clh(NT,0);
+  vector<su2double> cdh(NT,0); 
+  vector<su2double> cmh(NT,0);
+ 
+  su2double num = 0.0;
+  su2double den = 0.0;
+   /*--- Retrieve values from the config file ---*/
+  su2double w_h = config->GetAeroelastic_Frequency_Plunge();
+  su2double w_a = config->GetAeroelastic_Frequency_Pitch();
+  su2double x_a = config->GetAeroelastic_CG_Location();
+  su2double r_a = sqrt(config->GetAeroelastic_Radius_Gyration_Squared());
+  su2double mu       = config->GetAeroelastic_Airfoil_Mass_Ratio();
+  su2double wr  = w_h/w_a;
+  su2double w_alpha = w_a;
+  su2double Uinf = config->GetVelocity_FreeStream()[0];
+//  su2double w_alpha = config->GetAeroelastic_Frequency_Pitch();
+  su2double vf      = config->GetAeroelastic_Flutter_Speed_Index();
+  su2double b       = config->GetLength_Reynolds()/2.0; // airfoil semichord, Reynolds length is by defaul 1.0
+  su2double Alpha   = config->GetAoA()*PI_NUMBER/180.0;
+  unsigned long TimeIter = config->GetTimeIter();
+ 
+  vector<su2double> xi(2,0.0);
+
+//
+  cout << "Updating Frequency & Velocity (new)" << endl;
+  //
+ // vector<vector<su2double>> Kdofs(dofs, vector<su2double>(dofs,0.0));
+// Mass Matrix
+  vector<vector<su2double> > M(2,vector<su2double>(2,0.0));
+  vector<vector<su2double> > M_inv(2,vector<su2double>(2,0.0)); 
+  M[0][0] = 1;
+  M[0][1] = x_a;
+  M[1][0] = x_a;
+  M[1][1] = r_a*r_a;
+
+  Inverse_matrix2D(M, M_inv);
+
+  // Stiffness Matrix
+  vector<vector<su2double> > K(2,vector<su2double>(2,0.0));
+  K[0][0] = (w_h/w_a)*(w_h/w_a);
+  K[0][1] = 0.0;
+  K[1][0] = 0.0;
+  K[1][1] = r_a*r_a;
+
+   // Stiffness Matrix
+  vector<vector<su2double> > T(2,vector<su2double>(2,0.0));
+  T[0][0] = 2*xi[0]*(w_h/w_a)*(w_h/w_a);
+  T[0][1] = 0.0;
+  T[1][0] = 0.0;
+  T[1][1] = 2*xi[1]*r_a*r_a;
+
+  /*--- Get simualation period from config file ---*/
+  su2double Period = config->GetHarmonicBalance_Period();
+
+  /*--- Non-dimensionalize the input period, if necessary.      */
+  Period /= config->GetTime_Ref();
+
+  //su2double OmegaHB = 2 * PI_NUMBER / Period;
+  su2double OmegaHB = config->GetOmega_HB()[1];
+  //su2double OmegaHB_old = config->GetHB_frequency_old();
+
+  vector<vector<su2double>> DD(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> EE(NT, vector<su2double>(NT,0.0));
+  HB_Operator(config, DD, EE, NT, OmegaHB);
+
+//
+
+
+  vector<vector<su2double>> KHB(4,vector<su2double>(4,0.0));
+  for(int i=0;i<2;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  KHB[i*dofs+j][i*dofs+k] = K[j][k];
+	  }
+	  }
+	
+  }  
+  vector<vector<su2double>> MHB(4,vector<su2double>(4,0.0));
+  for(int i=0;i<2;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  MHB[i*dofs+j][i*dofs+k] = M[j][k];
+	  }
+	  }
+	
+  }  
+  vector<su2double> Force(4,0);
+  vector<su2double> eta(4,0.0);
+
+  vector<vector<su2double>> q(2,vector<su2double>(NT,0.0));
+  vector<vector<su2double>> qh(2,vector<su2double>(NT,0.0));
+  for (int i=0;i<NT;i++){  
+    q[1][i] = config->GetHB_pitch(i);
+    q[0][i] = config->GetHB_plunge(i);
+  }
+
+ for (int i=0;i<NT;i++){  
+ for (int j=0;j<NT;j++){  
+    qh[0][i] += (EE[i][j]*q[0][j]);
+    qh[1][i] += (EE[i][j]*q[1][j]);
+ } 
+ }
+
+          eta[0] = qh[0][2];
+          eta[1] = qh[1][2];
+          eta[2] = qh[0][1];
+          eta[3] = qh[1][1];
+
+  cout << "ETA" << endl;
+  for (int i=0;i<4;i++) {
+          cout << eta[i] << endl;
+  }
+  cout << endl;
+
+  for(int i=0;i<harmonics;i++) {
+
+          cl[i] = lift[i]*cos(Alpha) + drag[i]*sin(Alpha);
+          cd[i] = -lift[i]*sin(Alpha) + drag[i]*cos(Alpha);
+        
+          cm[i] = moment[i];
+
+  }
+
+  for (int i=0;i<NT;i++){  
+  for (int j=0;j<NT;j++){  
+    clh[i] += (EE[i][j]*cl[j]);
+    cmh[i] += (EE[i][j]*cm[j]);
+  } 
+  }
+
+          Force[0] = -clh[2];
+          Force[1] = -2*cmh[2];
+          Force[2] = -clh[1];
+          Force[3] = -2*cmh[1];
+
+  cout << "LIFT    /    MOMENT" << endl;
+  for(int count=0;count<NT;count++){
+
+               cout  << cl[count] << " " << cm[count] << "\n" << endl; 
+
+  }
+//
+//////////////////////////////////////////////////////////////////////////
+//
+  su2double L2norm;
+
+//  su2double vf_t = vf*sqrt(mu)/2.0;
+
+  su2double vf_t = vf;
+  su2double ovs2 = 1.0/vf_t/vf_t;
+  su2double ovs3 = 1.0/vf_t/vf_t/vf_t;
+  su2double vs2  = vf_t*vf_t;
+
+//  su2double Omega_t  = OmegaHB/Uinf;
+  su2double Omega_t  = OmegaHB/w_a;
+  su2double Omega2_t = Omega_t * Omega_t;
+
+  su2double OmegaHBnew, Omega_t_new, vf_t_new;
+  su2double PeriodHBnew;
+  su2double error_value;
+
+  //su2double cons = 4.0/PI_NUMBER/mu;
+  su2double cons = 1.0/PI_NUMBER;
+
+//L2norm = 0.0;
+//for (int i=0;i<4;i++) {
+//        
+//       num1[i] = 0.0;
+//       num2[i] = 0.0;
+//       Rs[i]   = -cons*Force[i];
+
+//for (int j=0;j<4;j++) {
+
+//       Rs[i]   += (-Omega2_t * MHB[i][j] * eta[j] + ovs2 * KHB[i][j]* eta[j]);
+//       num2[i] += (-2.0 * ovs3 * KHB[i][j] * eta[j]); 
+//       num1[i] += (-2.0 * Omega_t * MHB[i][j] * eta[j]);
+
+//}
+
+//L2norm += (0.5*(Rs[i]*Rs[i])); 
+
+//} 
+  L2norm = 0.0;
+  for (int i=0;i<4;i++) {
+          
+         num1[i] = 0.0;
+         num2[i] = -2.0*cons*vf_t*Force[i];
+         Rs[i]   = -cons*vs2*Force[i];
+
+  for (int j=0;j<4;j++) {
+
+         Rs[i]   += (-Omega2_t * MHB[i][j] * eta[j] + KHB[i][j]* eta[j]);
+         //num2[i] += (-2.0 * Omega2_t * vf_t * MHB[i][j] * eta[j]); 
+         num1[i] += (-2.0 * Omega_t * MHB[i][j] * eta[j]);
+
+  }
+
+  L2norm += (0.5*(Rs[i]*Rs[i])); 
+
+  } 
+
+
+  vector<vector<su2double>> Asys(2,vector<su2double>(2,0.0));
+  vector<vector<su2double>> Asys_inv(2,vector<su2double>(2,0.0));
+
+  cout << "REAL" << endl;
+  cout << "Residual= [" << Rs[0] << ", " << Rs[1] << "]" << endl;
+  cout << "Num1 = [" << num1[0] << ", " << num1[1] << "]" << endl;
+  cout << "Num2 = [" << num2[0] << ", " << num2[1] << "]" << endl; 
+  cout << "IMG" << endl;
+  cout << "Residual= [" << Rs[2] << ", " << Rs[3] << "]" << endl;
+  cout << "Num1 = [" << num1[2] << ", " << num1[3] << "]" << endl;
+  cout << "Num2 = [" << num2[2] << ", " << num2[3] << "]" << endl;
+
+//Asys[0][0] = num1[0];
+//Asys[1][0] = num1[1];
+//Asys[0][1] = num2[0];
+//Asys[1][1] = num2[1];
+
+  Asys[0][0] = num1[1];
+  Asys[1][0] = num1[3];
+  Asys[0][1] = num2[1];
+  Asys[1][1] = num2[3];
+
+//Asys[0][0] = num1[2];
+//Asys[1][0] = num1[3];
+//Asys[0][1] = num2[2];
+//Asys[1][1] = num2[3];
+
+  Inverse_matrix2D(Asys, Asys_inv);
+
+  cout << "Asys_inv" << endl;
+  cout << "|" << Asys_inv[0][0] << " " << Asys_inv[0][1] << "|" << endl;
+  cout << "|" << Asys_inv[1][0] << " " << Asys_inv[1][1] << "|" << endl;
+
+  su2double zeta = 0.1;
+
+  Omega_t_new = Omega_t - zeta * (Asys_inv[0][0]*Rs[0] + Asys_inv[0][1] * Rs[1]);
+  vf_t_new    = vf_t    - zeta * (Asys_inv[1][0]*Rs[0] + Asys_inv[1][1] * Rs[1]);
+
+//Omega_t_new = Omega_t - zeta * (Asys_inv[0][0]*Rs[2] - Asys_inv[0][1] * Rs[2]);
+//vf_t_new    = vf_t    - zeta * (Asys_inv[1][0]*Rs[3] - Asys_inv[1][1] * Rs[3]);
+
+//OmegaHBnew  = Uinf*Omega_t_new;
+//vf          = 2.0*vf_t_new/sqrt(mu);
+
+  OmegaHBnew  = w_a*Omega_t_new;
+  vf          = vf_t_new;
+
+  PeriodHBnew = 2*PI_NUMBER/OmegaHBnew;
+
+  error_value = (OmegaHBnew - OmegaHB)/OmegaHB;
+
+///////////////////////////////////////////////////////////////////////////////////////////  
+  
+  cout << "New HB Omega = " << (OmegaHBnew) << " / L2NORM = " << L2norm << " / Vf = " << vf << endl;
+  cout << "Error in omega calc = " << error_value << endl;
+
+  //config->SetAeroelastic_Flutter_Speed_Index(FlutterSpeed);
+ 
+  if ((abs(error_value) < 0.0000001 || OmegaHBnew < 0.001)&&(abs(L2norm) < 0.00000000000001)) {error_flag = true;} 
+
+  config->SetHarmonicBalance_Period(PeriodHBnew);
+
+  config->SetStr_L2_norm(L2norm);
+
+  config->SetAeroelastic_Flutter_Speed_Index(vf);
+
+  config->SetOmega_HB(0.0, 0);
+  for (int i=1;i<NH+1;i++)  
+    config->SetOmega_HB(i*OmegaHBnew, i);
+
+  for (int i=1;i<NH+1;i++)  
+    config->SetOmega_HB(-i*OmegaHBnew, NH + i);
+
+}
+
+void CSolver::SolveWing_HB_Thomas_Flutter(CGeometry *geometry, CConfig *config, unsigned short iMarker, vector<vector<su2double>>& displacements, vector<su2double> cl, vector<su2double> cd, vector<su2double> cm, int harmonics) {
+
+  /*--- The aeroelastic model solved in this routine is the typical section wing model
+   The details of the implementation are similar to those found in J.J. Alonso
+   "Fully-Implicit Time-Marching Aeroelastic Solutions" 1994. ---*/
+
+  /*--- Retrieve values from the config file ---*/
+  su2double w_h = config->GetAeroelastic_Frequency_Plunge();
+  su2double w_a = config->GetAeroelastic_Frequency_Pitch();
+  su2double x_a = config->GetAeroelastic_CG_Location();
+  su2double r_a = sqrt(config->GetAeroelastic_Radius_Gyration_Squared());
+  su2double wr  = w_h/w_a;
+  su2double w_alpha  = w_a;
+  su2double mu       = config->GetAeroelastic_Airfoil_Mass_Ratio();
+  su2double vf       = config->GetAeroelastic_Flutter_Speed_Index();
+  su2double b        = config->GetLength_Reynolds()/2.0; // airfoil semichord, Reynolds length is by defaul 1.0
+  unsigned long TimeIter = config->GetTimeIter();
+  const su2double DEG2RAD = PI_NUMBER/180.0; 
+  su2double dtau;
+  su2double PitchAmpl = config->GetPitching_Ampl(2)*DEG2RAD;
+
+  cout << "POIUUDJFWKFWEKF" << endl;
+  cout << "xa= " << x_a << ", r2a= " << r_a*r_a << ", wh/wa= " << wr << ", Vf= " << vf << ", b= " << b << endl;
+
+   int dofs = 2, NT = harmonics, NH = (NT-1)/2;
+  /*--- Structural Equation damping ---*/
+  vector<su2double> xi(2,0.0);
+
+  su2double Uinf = config->GetVelocity_FreeStream()[0];
+  //su2double OmegaHB = 2 * PI_NUMBER / Period;
+  su2double OmegaHB = config->GetOmega_HB()[1];
+  su2double vs      = vf*sqrt(mu)/2.0;
+  su2double omega_t = OmegaHB/w_a/vs; 
+  //su2double vs      = vf;
+ // su2double omega_t = OmegaHB/w_a;
+ 
+ /*--- Get simualation period from config file ---*/
+  su2double Period = 2*PI_NUMBER/OmegaHB;
+
+  /*--- Non-dimensionalize the input period, if necessary.      */
+  Period /= config->GetTime_Ref();
+//
+////////////////////////////////////////////////////////////////////////////////
+/*--- Eigenvectors and Eigenvalues of the Generalized EigenValue Problem. ---*/
+//
+  // Mass Matrix
+  vector<vector<su2double> > M(2,vector<su2double>(2,0.0));
+  vector<vector<su2double> > M_inv(2,vector<su2double>(2,0.0)); 
+  M[0][0] = 1;
+  M[0][1] = x_a;
+  M[1][0] = x_a;
+  M[1][1] = r_a*r_a;
+
+  Inverse_matrix2D(M, M_inv);
+
+  // Stiffness Matrix
+  vector<vector<su2double> > K(2,vector<su2double>(2,0.0));
+  K[0][0] = (w_h/w_a)*(w_h/w_a);
+  K[0][1] = 0.0;
+  K[1][0] = 0.0;
+  K[1][1] = r_a*r_a;
+
+   // Stiffness Matrix
+  vector<vector<su2double> > T(2,vector<su2double>(2,0.0));
+  T[0][0] = 2*xi[0]*(w_h/w_a)*(w_h/w_a);
+  T[0][1] = 0.0;
+  T[1][0] = 0.0;
+  T[1][1] = 2*xi[1]*r_a*r_a;
+
+//
+  vector<vector<su2double>> DD(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> EE(NT, vector<su2double>(NT,0.0)); 
+  vector<vector<su2double>> DHB(NT*dofs, vector<su2double>(NT*dofs,0.0));  
+
+  HB_Operator(config, DD, EE, NT, OmegaHB);
+
+//  
+  vector<vector<su2double>> KHB(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for(int i=0;i<NT-1;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  KHB[i*dofs+j][i*dofs+k] = K[j][k];
+	  }
+	  }
+	
+  }
+
+  vector<vector<su2double>> MHB(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for(int i=0;i<NT-1;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  MHB[i*dofs+j][i*dofs+k] = M[j][k];
+	  }
+	  }
+	
+  }
+ 
+  /*--- Forcing Term ---*/
+//
+/////////////////////////////////////////////////////////
+//        
+  cout << "LIFT   /   MOMENT   "  << endl;
+  for(int i=0;i<NT;i++) { 
+
+   cout << cl[i] << " " << cm[i] << endl;
+        
+  }
+
+  vector<su2double> Force(4,0);
+  vector<su2double> clh(NT,0.0);
+  vector<su2double> cmh(NT,0.0);
+
+  for(int i=0;i<NT;i++) { 
+  for(int j=0;j<NT;j++) { 
+
+       clh[i] += EE[i][j]*cl[j];
+       cmh[i] += EE[i][j]*cm[j];
+        
+  }
+  }
+
+  su2double CL0  = clh[0], ImCL = clh[1], ReCL = clh[2];
+  su2double CM0  = cmh[0], ImCM = cmh[1], ReCM = cmh[2];
+
+  Force[0] = -ReCL;
+  Force[1] = -2*ReCM;
+  Force[2] = -ImCL;
+  Force[3] = -2*ImCM;
+
+  cout << "FORCE" << endl;    
+  for(int j=0;j<4;j++) { 
+
+	  cout << Force[j] << "\n";
+    
+  }  
+  cout << endl;
+//
+//////////////////////////////////////////////////////////
+//
+  vector<su2double> deta(4,0.0);
+  vector<su2double> eta_old(4,0.0);
+  vector<su2double> eta_new(4,0.0);  
+  vector<su2double> v_vec(4,0.0);  
+  vector<su2double> h(NT,0.0); 
+  vector<su2double> alpha(NT,0.0);
+
+  for (int i=0;i<NT;i++){  
+    h[i]     = config->GetHB_plunge(i);
+    alpha[i] = config->GetHB_pitch(i);
+  }
+   
+  cout << "OLD: PLUNGE  -  PITCH" << endl;    
+  for(int j=0;j<NT;j++) { 
+
+	  cout << h[j] << "  "<< alpha[j] << "\n";
+    
+  }  
+  cout << endl;
+ 
+  vector<su2double> hh(NT,0.0);
+  vector<su2double> ah(NT,0.0);
+
+  cout << "alpha_hat = " << endl;
+  for(int i=0;i<NT;i++) { 
+  for(int j=0;j<NT;j++) { 
+
+       hh[i] += EE[i][j]*h[j];
+       ah[i] += EE[i][j]*alpha[j];
+  }
+       cout << ah[i] << endl; 
+  }
+
+  su2double H0  = hh[0], ImH = hh[1], ReH = hh[2];
+  su2double A0  = ah[0], ImA = ah[1], ReA = ah[2];
+
+  ImA = 0.0;
+  ReA = PitchAmpl;
+
+  v_vec[0] = ReH;
+  v_vec[1] = ReA;
+  v_vec[2] = ImH;
+  v_vec[3] = ImA;
+
+          eta_old[0] = v_vec[0];
+          eta_old[1] = vs;
+          eta_old[2] = v_vec[2];
+	  eta_old[3] = omega_t;
+
+    cout << "eta_old" << endl;
+    for(int j=0;j<4;j++) { 
+             cout << eta_old[j] << "\n";
+    }
+    cout << endl;
+
+//
+/////////////////////////////////////////////////////////
+//
+  vector<su2double> RS(4,0.0);
+  vector<vector<su2double> > ASys(4,vector<su2double>(5,0.0));
+  vector<vector<su2double> > JR(4,vector<su2double>(4,0.0));
+  su2double L2norm=0.0;
+  //su2double vs      = Uinf/w_a;
+  //su2double omega_t = OmegaHB/Uinf;
+
+  su2double omega2_t = omega_t*omega_t, ovs=1.0/vs, ovs2 = 1.0/(vs*vs), vs2 = vs*vs, ovs3 = 1.0/(vs*vs*vs), error_tol;
+
+  int NRiter= 15;
+  vector<su2double> lambda(4,1);
+  lambda[1] = 0.1;
+  lambda[3] = 0.1; 
+       
+  for(int IJK=0;IJK<NRiter;IJK++) {
+
+	  cout << IJK << endl;
+	  for(int i=0;i<4;i++) {
+
+                  JR[i][3] = 0.0;
+                  for(int j=0;j<4;j++){
+
+                	  JR[i][3] += (-2.0*omega_t*MHB[i][j]*v_vec[j]*mu); 
+
+                  }
+          }
+
+          for(int i=0;i<4;i++) {
+
+                  //JR[i][0] = -8.0*vs*Force[i]/PI_NUMBER;
+		  JR[i][1] = 0.0;
+                  for(int j=0;j<4;j++){
+
+                	  //JR[i][0] += (-2.0*vs*omega2_t*MHB[i][j]*v_vec[j]*mu); 
+			  JR[i][1] += ( -2.0*ovs3*KHB[i][j]*v_vec[j]*mu);
+
+                  }
+          }
+          
+	  JR[0][0] = -omega2_t*MHB[0][0]*mu + KHB[0][0]*ovs2*mu;
+	  JR[1][0] = -omega2_t*MHB[1][0]*mu + KHB[1][0]*ovs2*mu;
+	  JR[2][0] = -omega2_t*MHB[2][0]*mu + KHB[2][0]*ovs2*mu;
+	  JR[3][0] = -omega2_t*MHB[3][0]*mu + KHB[3][0]*ovs2*mu;
+                                                           
+	  JR[0][2] = -omega2_t*MHB[0][2]*mu + KHB[0][2]*ovs2*mu;
+	  JR[1][2] = -omega2_t*MHB[1][2]*mu + KHB[1][2]*ovs2*mu;
+	  JR[2][2] = -omega2_t*MHB[2][2]*mu + KHB[2][2]*ovs2*mu;
+	  JR[3][2] = -omega2_t*MHB[3][2]*mu + KHB[3][2]*ovs2*mu;
+
+	  cout << "JACOBIAN" << endl; 
+	  for(int i=0;i<4;i++) {
+          for(int j=0;j<4;j++) {  
+
+		  cout << JR[i][j] << " "; 
+	  
+	  }
+	  cout << endl;
+	  }
+	  //
+
+
+	  cout << "RESID" << endl;
+	  for(int i=0;i<4;i++) {
+
+		  RS[i] = -4.0*Force[i]/PI_NUMBER;
+		  //RS[i] = -Force[i]/PI_NUMBER;
+		  for(int j=0;j<4;j++){
+
+			  RS[i] += ((-omega2_t*MHB[i][j] + KHB[i][j]*ovs2)*v_vec[j]*mu); 
+		//
+//			  RS[i] += ( (-omega2_t*MHB[i][j]*vs2 + KHB[i][j])*v_vec[j]*mu ); 
+
+		  }
+
+			  cout << RS[i] << endl;
+	  }
+
+	  for(int i=0;i<4;i++) {
+          for(int j=0;j<4;j++) {  
+
+		  ASys[i][j] = JR[i][j];
+
+	  }
+	  }
+	  for(int i=0;i<4;i++) {
+
+		  ASys[i][4] = -RS[i];
+
+	  }
+
+	  for(int i=0;i<4;i++) {
+
+		  deta[i] = 0.0;
+
+	  }
+
+	  ////////////////////////////////
+	  Gauss_Elimination(ASys, deta);//
+	  ////////////////////////////////
+
+	  cout << "D_ETA    /   RS" << endl;
+	  error_tol = 0.0;
+	  for(int i=0;i<4;i++) {
+
+		  cout << deta[i] << " " << RS[i] << endl;
+
+	  eta_new[i] = eta_old[i] + lambda[i]*deta[i];
+
+	  error_tol += (deta[i]*deta[i]); 
+
+	  eta_old[i] = eta_new[i];
+
+	  L2norm += (RS[i]*RS[i]);
+
+	  }
+	  error_tol = sqrt(error_tol);
+
+	  cout << "Error_NR= " << error_tol << endl;
+
+	  if (error_tol > 100) break;
+
+	  v_vec[0] = eta_new[0];
+	  vs       = eta_new[1];
+          v_vec[2] = eta_new[2];
+	  omega_t  = eta_new[3];
+	  
+	  omega2_t = omega_t*omega_t;
+	  ovs2     = 1.0/vs/vs;
+	  ovs      = 1.0/vs;
+	  vs2      = vs*vs;
+	  ovs3     = 1.0/vs/vs/vs;
+  }
+
+          cout << "eta_new" << endl;
+	  for(int j=0;j<4;j++) { 
+             cout << eta_new[j] << "\n";
+    
+	  }
+	  cout << endl;
+
+///////// if (error_tol>10) {
+
+/////////  vs      = vf*sqrt(mu)/2.0;
+/////////  omega_t = OmegaHB/w_a/vs;
+//
+/////////  v_vec[0] = (ReH); 
+/////////  v_vec[1] = PitchAmpl/2.0;
+/////////  v_vec[2] = (ImH);
+/////////  v_vec[3] = 0.0;
+
+///////// }
+//
+/////////////////////////////////////////////////////////////
+//
+ 
+  su2double OmegaHBnew   = omega_t*w_a*vs;
+  su2double FlutterSpeed = 2.0*vs/sqrt(mu); 
+  //su2double OmegaHBnew   = omega_t*w_a;
+  //su2double FlutterSpeed = vs; 
+  su2double PeriodHBnew  = 2.0*PI_NUMBER/OmegaHBnew;
+  su2double error_value  = (OmegaHBnew - OmegaHB)/OmegaHB;
+
+  config->SetAeroelastic_Flutter_Speed_Index(FlutterSpeed);
+ 
+ cout << "Omega HB= " << OmegaHBnew << " | FlutterSpeed= " << FlutterSpeed << endl; 
+//  if ((abs(error_value) < 0.0000001 || OmegaHBnew < 0.001)&&(error_tol < 0.00000000000001)) {error_flag = true;} 
+
+  cout << "Freq Error= " << error_value << " / NR error= " << error_tol << endl;
+  config->SetHarmonicBalance_Period(PeriodHBnew);
+  config->SetStr_L2_norm(sqrt(L2norm));
+
+  config->SetOmega_HB(0.0, 0);
+  for (int i=1;i<NH+1;i++)  
+    config->SetOmega_HB(i*OmegaHBnew, i);
+
+  for (int i=1;i<NH+1;i++)  
+    config->SetOmega_HB(-i*OmegaHBnew, NH + i);
+
+//
+/////////////////////////////////////////////////////////////
+//
+ 
+  //ReA = PitchAmpl;
+  //ImA = 0.0;
+  ReH = v_vec[0];
+  ImH = v_vec[2];
+
+  hh[0] = 0.0; hh[1] = ImH; hh[2] = ReH;
+  ah[0] = 0.0; ah[1] = ImA; ah[2] = ReA;
+
+	    cout << "TIMEHB" << endl;
+	    vector<su2double> time_inst(NT,0.0);	
+	    for(int i=0;i<NT;i++) {
+
+                    time_inst[i]  = i*PeriodHBnew/NT;
+                    cout << time_inst[i] << "\n";
+	    }
+	    cout << endl;
+
+   	    for(int i=0;i<NT;i++) {
+
+		    h[i]     = hh[0];
+	            alpha[i] = ah[0];  
+
+		    for(int j=0;j<NH;j++) {
+
+		    h[i]     = h[i] + hh[2*j+1]*cos((j+1)*OmegaHBnew*time_inst[i]) 
+			            + hh[2*j+2]*sin((j+1)*OmegaHBnew*time_inst[i]);
+	            alpha[i] = alpha[i] + ah[2*j+1]*cos((j+1)*OmegaHBnew*time_inst[i])
+				        + ah[2*j+2]*sin((j+1)*OmegaHBnew*time_inst[i]);
+
+		    }
+
+	    }
+
+  vector<su2double> alpha_d(NT,0.0);
+  vector<su2double> h_d(NT,0.0);
+
+  for(int i=0;i<NT;i++) { 
+  for(int j=0;j<NT;j++) { 
+
+       h_d[i] += (OmegaHBnew*DD[i][j]*h[j]);
+       alpha_d[i] += (OmegaHBnew*DD[i][j]*alpha[j]);
+        
+  }
+  }
+
+  /*--- Set the solution of the structural equations ---*/
+  for (int i=0;i<NT;i++) {
+
+  displacements[i][0] = b*h[i];
+  displacements[i][1] = alpha[i];
+  displacements[i][2] = b*h_d[i];
+  displacements[i][3] = alpha_d[i];
+
+  }
+  for (int i=0;i<NT;i++){  
+    config->SetHB_pitch(displacements[i][1], i);
+    config->SetHB_plunge(displacements[i][0]/b, i);
+    config->SetHB_pitch_rate(displacements[i][3], i);
+    config->SetHB_plunge_rate(displacements[i][2], i);
+  }
+
+//
+/////////////////////////////////////////////////////////////
+//
+  
+   cout << "NEW: PLUNGE  -  PITCH" << endl;
+      for(int j=0;j<NT;j++) { 
+             cout << h[j] << "  "<< alpha[j] << "\n";
+    }
+      cout << endl;
+ 
+}
+
+void CSolver::SolveWing_HB_Thomas_Velocity(CGeometry *geometry, CConfig *config, unsigned short iMarker, vector<vector<su2double>>& displacements, vector<su2double> cl, vector<su2double> cd, vector<su2double> cm, int harmonics) {
+
+  /*--- The aeroelastic model solved in this routine is the typical section wing model
+   The details of the implementation are similar to those found in J.J. Alonso
+   "Fully-Implicit Time-Marching Aeroelastic Solutions" 1994. ---*/
+
+  /*--- Retrieve values from the config file ---*/
+  su2double w_h = config->GetAeroelastic_Frequency_Plunge();
+  su2double w_a = config->GetAeroelastic_Frequency_Pitch();
+  su2double x_a = config->GetAeroelastic_CG_Location();
+  su2double r_a = sqrt(config->GetAeroelastic_Radius_Gyration_Squared());
+  su2double wr  = w_h/w_a;
+  su2double w_alpha  = w_a;
+  su2double mu       = config->GetAeroelastic_Airfoil_Mass_Ratio();
+  su2double vf       = config->GetAeroelastic_Flutter_Speed_Index();
+  su2double b        = config->GetLength_Reynolds()/2.0; // airfoil semichord, Reynolds length is by defaul 1.0
+  unsigned long TimeIter = config->GetTimeIter();
+  const su2double DEG2RAD = PI_NUMBER/180.0; 
+  su2double dtau;
+  su2double PitchAmpl = config->GetPitching_Ampl(2)*DEG2RAD;
+
+  cout << "xa= " << x_a << ", r2a= " << r_a*r_a << ", wh/wa= " << wr << ", Vf= " << vf << ", b= " << b << endl;
+
+   int dofs = 2, NT = harmonics, NH = (NT-1)/2;
+  /*--- Structural Equation damping ---*/
+  vector<su2double> xi(2,0.0);
+
+  su2double Uinf = config->GetVelocity_FreeStream()[0];
+  //su2double OmegaHB = 2 * PI_NUMBER / Period;
+  su2double OmegaHB = config->GetOmega_HB()[1];
+  //su2double vs      = vf*sqrt(mu)/2.0;
+  //su2double omega_t = OmegaHB/w_a/vs; 
+  su2double vs      = vf;
+  su2double omega_t = OmegaHB/w_a;
+ 
+ /*--- Get simualation period from config file ---*/
+  su2double Period = 2*PI_NUMBER/OmegaHB;
+
+  /*--- Non-dimensionalize the input period, if necessary.      */
+  Period /= config->GetTime_Ref();
+//
+////////////////////////////////////////////////////////////////////////////////
+/*--- Eigenvectors and Eigenvalues of the Generalized EigenValue Problem. ---*/
+//
+  // Mass Matrix
+  vector<vector<su2double> > M(2,vector<su2double>(2,0.0));
+  vector<vector<su2double> > M_inv(2,vector<su2double>(2,0.0)); 
+  M[0][0] = 1;
+  M[0][1] = x_a;
+  M[1][0] = x_a;
+  M[1][1] = r_a*r_a;
+
+  Inverse_matrix2D(M, M_inv);
+
+  // Stiffness Matrix
+  vector<vector<su2double> > K(2,vector<su2double>(2,0.0));
+  K[0][0] = (w_h/w_a)*(w_h/w_a);
+  K[0][1] = 0.0;
+  K[1][0] = 0.0;
+  K[1][1] = r_a*r_a;
+
+   // Stiffness Matrix
+  vector<vector<su2double> > T(2,vector<su2double>(2,0.0));
+  T[0][0] = 2*xi[0]*(w_h/w_a)*(w_h/w_a);
+  T[0][1] = 0.0;
+  T[1][0] = 0.0;
+  T[1][1] = 2*xi[1]*r_a*r_a;
+
+//
+  vector<vector<su2double>> DD(NT, vector<su2double>(NT,0.0));
+  vector<vector<su2double>> EE(NT, vector<su2double>(NT,0.0)); 
+  vector<vector<su2double>> DHB(NT*dofs, vector<su2double>(NT*dofs,0.0));  
+
+  HB_Operator(config, DD, EE, NT, OmegaHB);
+
+//  
+  vector<vector<su2double>> KHB(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for(int i=0;i<NT-1;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  KHB[i*dofs+j][i*dofs+k] = K[j][k];
+	  }
+	  }
+	
+  }
+
+  vector<vector<su2double>> MHB(NT*dofs,vector<su2double>(NT*dofs,0.0));
+  for(int i=0;i<NT-1;i++) {
+
+	  for (int j=0;j<dofs;j++){
+          for (int k=0;k<dofs;k++){
+	  MHB[i*dofs+j][i*dofs+k] = M[j][k];
+	  }
+	  }
+	
+  }
+ 
+  /*--- Forcing Term ---*/
+//
+/////////////////////////////////////////////////////////
+//        
+  cout << "LIFT   /   MOMENT   "  << endl;
+  for(int i=0;i<NT;i++) { 
+
+   cout << cl[i] << " " << cm[i] << endl;
+        
+  }
+
+  vector<su2double> Force(4,0);
+  vector<su2double> clh(NT,0.0);
+  vector<su2double> cmh(NT,0.0);
+
+  for(int i=0;i<NT;i++) { 
+  for(int j=0;j<NT;j++) { 
+
+       clh[i] += EE[i][j]*cl[j];
+       cmh[i] += EE[i][j]*cm[j];
+        
+  }
+  }
+
+  su2double CL0  = clh[0], ImCL = clh[1], ReCL = clh[2];
+  su2double CM0  = cmh[0], ImCM = cmh[1], ReCM = cmh[2];
+
+  Force[0] = -ReCL;
+  Force[1] = -2*ReCM;
+  Force[2] = -ImCL;
+  Force[3] = -2*ImCM;
+
+  cout << "FORCE" << endl;    
+  for(int j=0;j<4;j++) { 
+
+	  cout << Force[j] << "\n";
+    
+  }  
+  cout << endl;
+//
+//////////////////////////////////////////////////////////
+//
+  vector<su2double> deta(4,0.0);
+  vector<su2double> eta_old(4,0.0);
+  vector<su2double> eta_new(4,0.0);  
+  vector<su2double> v_vec(4,0.0);  
+  vector<su2double> h(NT,0.0); 
+  vector<su2double> alpha(NT,0.0);
+
+  for (int i=0;i<NT;i++){  
+    h[i]     = config->GetHB_plunge(i);
+    alpha[i] = config->GetHB_pitch(i);
+  }
+   
+  cout << "OLD: PLUNGE  -  PITCH" << endl;    
+  for(int j=0;j<NT;j++) { 
+
+	  cout << h[j] << "  "<< alpha[j] << "\n";
+    
+  }  
+  cout << endl;
+ 
+  vector<su2double> hh(NT,0.0);
+  vector<su2double> ah(NT,0.0);
+
+  cout << "alpha_hat = " << endl;
+  for(int i=0;i<NT;i++) { 
+  for(int j=0;j<NT;j++) { 
+
+       hh[i] += EE[i][j]*h[j];
+       ah[i] += EE[i][j]*alpha[j];
+  }
+       cout << ah[i] << endl; 
+  }
+
+  su2double H0  = hh[0], ImH = hh[1], ReH = hh[2];
+  su2double A0  = ah[0], ImA = ah[1], ReA = ah[2];
+
+  ImA = 0.0;
+  ReA = PitchAmpl;
+
+  v_vec[0] = ReH;
+  v_vec[1] = ReA;
+  v_vec[2] = ImH;
+  v_vec[3] = ImA;
+
+          eta_old[0] = v_vec[0];
+          eta_old[1] = v_vec[1];
+	  eta_old[2] = v_vec[2];;
+          eta_old[3] = vs;
+
+    cout << "eta_old" << endl;
+    for(int j=0;j<4;j++) { 
+             cout << eta_old[j] << "\n";
+    }
+    cout << endl;
+
+//
+/////////////////////////////////////////////////////////
+//
+  vector<su2double> RS(4,0.0);
+  vector<vector<su2double> > ASys(4,vector<su2double>(5,0.0));
+  vector<vector<su2double> > JR(4,vector<su2double>(4,0.0));
+  su2double L2norm=0.0;
+  //su2double vs      = Uinf/w_a;
+  //su2double omega_t = OmegaHB/Uinf;
+
+  su2double omega2_t = omega_t*omega_t, ovs=1.0/vs, ovs2 = 1.0/(vs*vs), vs2 = vs*vs, ovs3 = 1.0/(vs*vs*vs), error_tol;
+
+  int NRiter= 1;
+  vector<su2double> lambda(4,0.1);
+  //lambda[1] = 0.01;
+  //lambda[3] = 0.01; 
+       
+  for(int IJK=0;IJK<NRiter;IJK++) {
+
+//////////cout << IJK << endl;
+//////////for(int i=0;i<4;i++) {
+
+//////////        JR[i][3] = 0.0;
+//////////        for(int j=0;j<4;j++){
+
+//////////      	  JR[i][3] += (-2.0*omega_t*MHB[i][j]*v_vec[j]*mu); 
+
+//////////        }
+//////////}
+
+          for(int i=0;i<4;i++) {
+
+                  JR[i][3] = -2.0*vs*Force[i]/PI_NUMBER;
+		  //JR[i][2] = 0.0;
+                  for(int j=0;j<4;j++){
+
+                	  //JR[i][0] += (-2.0*vs*omega2_t*MHB[i][j]*v_vec[j]*mu); 
+		//	  JR[i][2] += ( -2.0*ovs3*KHB[i][j]*v_vec[j]*mu);
+
+                  }
+          }
+          
+	  JR[0][0] = -omega2_t*MHB[0][0] + KHB[0][0];
+	  JR[1][0] = -omega2_t*MHB[1][0] + KHB[1][0];
+	  JR[2][0] = -omega2_t*MHB[2][0] + KHB[2][0];
+	  JR[3][0] = -omega2_t*MHB[3][0] + KHB[3][0];
+          
+          JR[0][1] = -omega2_t*MHB[0][1] + KHB[0][1];
+	  JR[1][1] = -omega2_t*MHB[1][1] + KHB[1][1];
+	  JR[2][1] = -omega2_t*MHB[2][1] + KHB[2][1];
+	  JR[3][1] = -omega2_t*MHB[3][1] + KHB[3][1];
+                                                    
+	  JR[0][2] = -omega2_t*MHB[0][2] + KHB[0][2];
+	  JR[1][2] = -omega2_t*MHB[1][2] + KHB[1][2];
+	  JR[2][2] = -omega2_t*MHB[2][2] + KHB[2][2];
+	  JR[3][2] = -omega2_t*MHB[3][2] + KHB[3][2];
+
+	  cout << "JACOBIAN" << endl; 
+	  for(int i=0;i<4;i++) {
+          for(int j=0;j<4;j++) {  
+
+		  cout << JR[i][j] << " "; 
+	  
+	  }
+	  cout << endl;
+	  }
+	  //
+
+
+	  cout << "RESID" << endl;
+	  for(int i=0;i<4;i++) {
+
+		  RS[i] = -vs2*Force[i]/PI_NUMBER;
+		  //RS[i] = -Force[i]/PI_NUMBER;
+		  for(int j=0;j<4;j++){
+
+			  RS[i] += ((-omega2_t*MHB[i][j] + KHB[i][j])*v_vec[j]); 
+		//
+//			  RS[i] += ( (-omega2_t*MHB[i][j]*vs2 + KHB[i][j])*v_vec[j]*mu ); 
+
+		  }
+
+			  cout << RS[i] << endl;
+	  }
+
+	  for(int i=0;i<4;i++) {
+          for(int j=0;j<4;j++) {  
+
+		  ASys[i][j] = JR[i][j];
+
+	  }
+	  }
+	  for(int i=0;i<4;i++) {
+
+		  ASys[i][4] = -RS[i];
+
+	  }
+
+	  for(int i=0;i<4;i++) {
+
+		  deta[i] = 0.0;
+
+	  }
+
+	  ////////////////////////////////
+	  Gauss_Elimination(ASys, deta);//
+	  ////////////////////////////////
+
+	  cout << "D_ETA    /   RS" << endl;
+	  error_tol = 0.0;
+	  for(int i=0;i<4;i++) {
+
+		  cout << deta[i] << " " << RS[i] << endl;
+
+	  eta_new[i] = eta_old[i] + lambda[i]*deta[i];
+
+	  error_tol += (deta[i]*deta[i]); 
+
+	  eta_old[i] = eta_new[i];
+
+	  L2norm += (RS[i]*RS[i]);
+
+	  }
+	  error_tol = sqrt(error_tol);
+
+	  cout << "Error_NR= " << error_tol << endl;
+
+	  if (error_tol > 100) break;
+
+	  v_vec[0] = eta_new[0];
+          v_vec[1] = eta_new[1];
+	  v_vec[2] = eta_new[2]; 
+	  vs       = eta_new[3];
+
+	  ovs2     = 1.0/vs/vs;
+	  ovs      = 1.0/vs;
+	  vs2      = vs*vs;
+	  ovs3     = 1.0/vs/vs/vs;
+  }
+
+          cout << "eta_new" << endl;
+	  for(int j=0;j<4;j++) { 
+             cout << eta_new[j] << "\n";
+    
+	  }
+	  cout << endl;
+
+///////// if (error_tol>10) {
+
+/////////  vs      = vf*sqrt(mu)/2.0;
+/////////  omega_t = OmegaHB/w_a/vs;
+//
+/////////  v_vec[0] = (ReH); 
+/////////  v_vec[1] = PitchAmpl/2.0;
+/////////  v_vec[2] = (ImH);
+/////////  v_vec[3] = 0.0;
+
+///////// }
+//
+/////////////////////////////////////////////////////////////
+//
+ 
+  //su2double OmegaHBnew   = omega_t*w_a*vs;
+  //su2double FlutterSpeed = 2.0*vs/sqrt(mu); 
+  su2double FlutterSpeed = vs; 
+  su2double OmegaHBnew   = OmegaHB;
+  //su2double OmegaHBnew   = omega_t*w_a;
+  //su2double FlutterSpeed = vs; 
+  su2double PeriodHBnew  = 2.0*PI_NUMBER/OmegaHBnew;
+  su2double error_value  = (OmegaHBnew - OmegaHB)/OmegaHB;
+
+  config->SetAeroelastic_Flutter_Speed_Index(FlutterSpeed);
+ 
+ cout << "Omega HB= " << OmegaHBnew << " | FlutterSpeed= " << FlutterSpeed << endl; 
+//  if ((abs(error_value) < 0.0000001 || OmegaHBnew < 0.001)&&(error_tol < 0.00000000000001)) {error_flag = true;} 
+
+  cout << "Freq Error= " << error_value << " / NR error= " << error_tol << endl;
+  config->SetHarmonicBalance_Period(PeriodHBnew);
+  config->SetStr_L2_norm(sqrt(L2norm));
+
+  config->SetOmega_HB(0.0, 0);
+  for (int i=1;i<NH+1;i++)  
+    config->SetOmega_HB(i*OmegaHBnew, i);
+
+  for (int i=1;i<NH+1;i++)  
+    config->SetOmega_HB(-i*OmegaHBnew, NH + i);
+
+//
+/////////////////////////////////////////////////////////////
+//
+ 
+  //ReA = PitchAmpl;
+  //ImA = 0.0;
+  ReH = v_vec[0];
+  ImH = v_vec[2];
+  ReA = v_vec[1];
+  ImA = v_vec[3];
+
+  hh[0] = 0.0; hh[1] = ImH; hh[2] = ReH;
+  ah[0] = 0.0; ah[1] = ImA; ah[2] = ReA;
+
+	    cout << "TIMEHB" << endl;
+	    vector<su2double> time_inst(NT,0.0);	
+	    for(int i=0;i<NT;i++) {
+
+                    time_inst[i]  = i*PeriodHBnew/NT;
+                    cout << time_inst[i] << "\n";
+	    }
+	    cout << endl;
+
+   	    for(int i=0;i<NT;i++) {
+
+		    h[i]     = hh[0];
+	            alpha[i] = ah[0];  
+
+		    for(int j=0;j<NH;j++) {
+
+		    h[i]     = h[i] + hh[2*j+1]*cos((j+1)*OmegaHBnew*time_inst[i]) 
+			            + hh[2*j+2]*sin((j+1)*OmegaHBnew*time_inst[i]);
+	            alpha[i] = alpha[i] + ah[2*j+1]*cos((j+1)*OmegaHBnew*time_inst[i])
+				        + ah[2*j+2]*sin((j+1)*OmegaHBnew*time_inst[i]);
+
+		    }
+
+	    }
+
+  vector<su2double> alpha_d(NT,0.0);
+  vector<su2double> h_d(NT,0.0);
+
+  for(int i=0;i<NT;i++) { 
+  for(int j=0;j<NT;j++) { 
+
+       h_d[i] += (OmegaHBnew*DD[i][j]*h[j]);
+       alpha_d[i] += (OmegaHBnew*DD[i][j]*alpha[j]);
+        
+  }
+  }
+
+  /*--- Set the solution of the structural equations ---*/
+  for (int i=0;i<NT;i++) {
+
+  displacements[i][0] = b*h[i];
+  displacements[i][1] = alpha[i];
+  displacements[i][2] = b*h_d[i];
+  displacements[i][3] = alpha_d[i];
+
+  }
+  for (int i=0;i<NT;i++){  
+    config->SetHB_pitch(displacements[i][1], i);
+    config->SetHB_plunge(displacements[i][0]/b, i);
+    config->SetHB_pitch_rate(displacements[i][3], i);
+    config->SetHB_plunge_rate(displacements[i][2], i);
+  }
+
+//
+/////////////////////////////////////////////////////////////
+//
+  
+   cout << "NEW: PLUNGE  -  PITCH" << endl;
+      for(int j=0;j<NT;j++) { 
+             cout << h[j] << "  "<< alpha[j] << "\n";
+    }
+      cout << endl;
+ 
 }
 
 void CSolver::SetUpTypicalSectionWingModel(vector<vector<su2double> >& Phi, vector<su2double>& omega, CConfig *config) {
@@ -2530,6 +8048,11 @@ void CSolver::SolveTypicalSectionWingModel(CGeometry *geometry, su2double Cl, su
     eta_dot[i] = x_np1[1][i]; // For velocities, absolute values are used.
   }
 
+  // cout << "xn1      = [" << x_n1[0][0]      << ", " << x_n1[0][1]      << "]" << endl;
+  // cout << "xn       = [" << x_n[0][0]       << ", " << x_n[0][1]       << "]" << endl;
+  // cout << "xnp1_old = [" << x_np1_old[0][0] << ", " << x_np1_old[0][1] << "]" << endl;
+  // cout << "xnp1     = [" << x_np1[0][0]     << ", " << x_np1[0][1]     << "]" << endl;
+
   /*--- Transform back from the generalized coordinates to get the actual displacements in plunge and pitch  q = Phi*eta ---*/
   vector<su2double> q(2,0.0);
   vector<su2double> q_dot(2,0.0);
@@ -2555,12 +8078,12 @@ void CSolver::SolveTypicalSectionWingModel(CGeometry *geometry, su2double Cl, su
   displacements[3] = alpha_dot;
 
   /*--- Calculate the total plunge and total pitch displacements for the unsteady step by summing the displacement at each sudo time step ---*/
-  su2double pitch, plunge;
-  pitch = config->GetAeroelastic_pitch(iMarker);
-  plunge = config->GetAeroelastic_plunge(iMarker);
+//su2double pitch, plunge;
+//pitch = config->GetAeroelastic_pitch(iMarker);
+//plunge = config->GetAeroelastic_plunge(iMarker);
 
-  config->SetAeroelastic_pitch(iMarker , pitch+dalpha);
-  config->SetAeroelastic_plunge(iMarker , plunge+dh/b);
+//config->SetAeroelastic_pitch(iMarker , pitch+dalpha);
+//config->SetAeroelastic_plunge(iMarker , plunge+dh/b);
 
   /*--- Set the Aeroelastic solution at time n+1. This gets update every sudo time step
    and after convering the sudo time step the solution at n+1 get moved to the solution at n
@@ -2568,6 +8091,150 @@ void CSolver::SolveTypicalSectionWingModel(CGeometry *geometry, su2double Cl, su
 
   config->SetAeroelastic_np1(iMarker, x_np1);
 
+}
+
+void CSolver::SolveModalWing(CGeometry *geometry, CConfig *config, unsigned short iMarker, su2double*& gen_forces, su2double*& gen_displacements) {
+
+  /*--- The aeroelastic model solved in this routine is the typical section wing model
+   The details of the implementation are similar to those found in J.J. Alonso
+   "Fully-Implicit Time-Marching Aeroelastic Solutions" 1994. ---*/
+ 
+  su2double Alpha = config->GetAoA()*PI_NUMBER/180.0;
+  unsigned short modes = config->GetNumber_Modes();
+  vector<su2double> w_modes(modes,0.0); //contains solution(displacements and rates) of typical section wing model.
+
+  su2double vf      = config->GetAeroelastic_Flutter_Speed_Index();
+  su2double b       = config->GetLength_Reynolds()/2.0; // airfoil semichord, Reynolds length is by defaul 1.0
+  su2double Vo      = config->GetConicalRefVol();
+  su2double dt      = config->GetDelta_UnstTimeND();
+
+  su2double scale_param = 1/config->Get_Scaling_Parameter();
+
+  //su2double scale_param = 1.0/175.125;
+
+//   cout << "Inside Modal" << endl;
+
+
+  su2double w_a = config->GetAeroelastic_Frequency_Pitch();
+  /*--- Structural Equation damping ---*/
+  vector<su2double> xi(modes,0.02);
+
+  /*--- Solving the Decoupled Aeroelastic Problem with second order time discretization Eq (9) ---*/
+
+  /*--- Solution variables description. //x[j][i], j-entry, i-equation. // Time (n+1)->np1, n->n, (n-1)->n1 ---*/
+  vector<vector<su2double> > x_np1(2, vector<su2double>(modes,0.0));
+
+  /*--- Values from previous movement of spring at true time step n+1
+   We use this values because we are solving for delta changes not absolute changes ---*/
+  vector<vector<su2double> > x_np1_old = config->GetAeroelastic_np1(iMarker);
+
+  /*--- Values at previous timesteps. ---*/
+  vector<vector<su2double> > x_n = config->GetAeroelastic_n(iMarker);
+  vector<vector<su2double> > x_n1 = config->GetAeroelastic_n1(iMarker);
+
+ // cout << "OLD SOL READ" << endl;
+  /*--- Set up of variables used to solve the structural problem. ---*/
+  vector<su2double> f_tilde(modes,0.0);
+  vector<vector<su2double> > A_inv(2,vector<su2double>(2,0.0));
+  su2double detA;
+  su2double s1, s2;
+  vector<su2double> rhs(2,0.0); //right hand side
+  vector<su2double> eta(modes,0.0);
+  vector<su2double> eta_dot(modes,0.0);
+
+  /*--- Forcing Term ---*/
+  su2double cons = vf*vf*b*b/2.0/Vo;
+
+  for (unsigned short i=0;i<modes; i++) {
+
+          w_modes[i] = config->GetAero_Omega(i)/w_a;
+
+  }
+
+  su2double value;
+  cout << "F= [" ;
+  for (unsigned short i=0;i<modes;i++) {  
+
+       value = gen_forces[i];       
+       f_tilde[i] = (cons * scale_param * value);
+       cout << f_tilde[i] << " ";
+  }
+  cout << "]" << endl;
+
+  dt = dt*w_a; //Non-dimensionalize the structural time.
+
+//for (unsigned short i=0;i<modes;i++) {  
+//     w_modes[i] = w_modes[i]/w_modes[1];
+//}
+  /*--- solve each decoupled equation (The inverse of the 2x2 matrix is provided) ---*/
+  for (unsigned short i=0; i<modes; i++) {
+    /* Matrix Inverse */
+//	  cout << "Mode : " << i << endl; 
+
+    detA = 9.0/(4.0*dt*dt) + 3*w_modes[i]*xi[i]/(dt) + w_modes[i]*w_modes[i];
+    A_inv[0][0] = 1/detA * (3/(2.0*dt) + 2*xi[i]*w_modes[i]);
+    A_inv[0][1] = 1/detA * 1;
+    A_inv[1][0] = 1/detA * -w_modes[i]*w_modes[i];
+    A_inv[1][1] = 1/detA * 3/(2.0*dt);
+
+    /* Source Terms from previous iterations */
+    s1 = (-4*x_n[0][i] + x_n1[0][i])/(2.0*dt);
+    s2 = (-4*x_n[1][i] + x_n1[1][i])/(2.0*dt);
+
+    /* Problem Right Hand Side */
+    rhs[0] = -s1;
+    rhs[1] = f_tilde[i]-s2;
+
+    /* Solve the equations */
+    x_np1[0][i] = A_inv[0][0]*rhs[0] + A_inv[0][1]*rhs[1];
+    x_np1[1][i] = A_inv[1][0]*rhs[0] + A_inv[1][1]*rhs[1];
+
+    eta[i] = x_np1[0][i]-x_np1_old[0][i];  // For displacements, the change(deltas) is used.
+    eta_dot[i] = x_np1[1][i]; // For velocities, absolute values are used.
+  }
+  /*--- Transform back from the generalized coordinates to get the actual displacements in plunge and pitch  q = Phi*eta ---*/
+  /*--- Set the solution of the structural equations ---*/
+ 
+  cout << " xnp_old= [" ;
+  for (unsigned short i=0;i<modes;i++) {  
+
+       cout << x_np1_old[0][i] << " ";
+  }
+  cout << "]" << endl;
+  cout << " xnp= [" ;
+  for (unsigned short i=0;i<modes;i++) {  
+
+       cout << x_np1[0][i] << " ";
+  }
+  cout << "]" << endl;
+
+
+   // cout << "Setting solution" << endl;
+  gen_displacements[0] = eta[0];
+  gen_displacements[1] = eta[1];
+  gen_displacements[2] = eta[2];
+  gen_displacements[3] = eta[3];
+
+  /*--- Calculate the total plunge and total pitch displacements for the unsteady step by summing the displacement at each sudo time step ---*/
+  su2double pitch, plunge;
+  pitch = config->GetAeroelastic_pitch(iMarker);
+  plunge = config->GetAeroelastic_plunge(iMarker);
+
+ // cout << "about to store" << endl;
+  
+  config->SetAeroelastic_pitch(iMarker , pitch+gen_displacements[0]);
+  config->SetAeroelastic_plunge(iMarker , plunge+gen_displacements[1]);
+
+
+  //cout << "Mode1: " << pitch+gen_displacements[0] << " | Mode2: " << plunge+gen_displacements[1] << endl;
+ // cout << "pitch plunge stored" << endl;
+  /*--- Set the Aeroelastic solution at time n+1. This gets update every sudo time step
+   and after convering the sudo time step the solution at n+1 get moved to the solution at n
+   in SetDualTime_Solver method ---*/
+
+  config->SetAeroelastic_np1(iMarker, x_np1);
+
+ // cout << "NEW SOL SET" << endl;
 }
 
 void CSolver::Restart_OldGeometry(CGeometry *geometry, CConfig *config) {
@@ -4159,6 +9826,149 @@ void CSolver::ComputeResidual_Multizone(const CGeometry *geometry, const CConfig
   }
   END_SU2_OMP_PARALLEL
 }
+
+void CSolver::HB_Operator(CConfig *config, vector<vector<su2double>>& D, vector<vector<su2double>>& E, int nInstHB, su2double Omega) {
+
+   int NT = nInstHB, NH = (NT-1)/2, i, j, k; 
+   su2double a = 2*PI_NUMBER/NT;
+
+   //vector<vector<su2double>> E(NT,vector<su2double>(NT,0.0));
+   vector<vector<su2double>> Einv(NT,vector<su2double>(NT,0.0));
+   //vector<vector<su2double>> D(NT,vector<su2double>(NT,0.0));
+   vector<vector<su2double>> A(NT,vector<su2double>(NT,0.0));
+   vector<vector<su2double>> tmp(NT,vector<su2double>(NT,0.0));
+
+
+   for (j=0;j<NT;j++) {
+	  E[0][j] = 1.0/NT;
+   } 
+   for (i=0;i<NH;i++) {
+   for (j=0;j<NT;j++) {
+	  E[2*i+1][j] = 2*cos(j*(i+1)*a)/NT;
+   }
+   }
+   for (i=0;i<NH;i++) {
+   for (j=0;j<NT;j++) {
+	  E[2*i+2][j] = 2*sin(j*(i+1)*a)/NT;
+   }
+   }
+
+   for (j=0;j<NT;j++) {
+	  Einv[j][0] = 1;
+   } 
+   for (j=0;j<NH;j++) {
+   for (i=0;i<NT;i++) {
+	  Einv[i][2*j+1] = cos(i*(j+1)*a);
+   }
+   }
+   for (j=0;j<NH;j++) {
+   for (i=0;i<NT;i++) {
+	  Einv[i][2*j+2] = sin(i*(j+1)*a);
+   }
+   }
+
+   for (i=0;i<NH;i++) {
+
+         A[2*i+1][2*i+2] = -(i+1);
+	 
+         A[2*i+2][2*i+1] =  (i+1);
+         
+   }
+
+   for (i=0;i<NT;i++) {
+   for (j=0;j<NT;j++) {	
+   for (k=0;k<NT;k++) {
+
+	  tmp[i][j] += A[i][k] * E[k][j];
+   
+   }
+   }
+   }
+   for (i=0;i<NT;i++) {
+   for (j=0;j<NT;j++) {	
+   for (k=0;k<NT;k++) {
+
+	  D[i][j] += Einv[i][k] * tmp[k][j];
+   
+   }
+   }
+   }
+   for (i=0;i<NT;i++) {
+   for (j=0;j<NT;j++) {	
+  	  D[i][j] = -D[i][j];
+    
+   }
+   }
+
+}
+
+void CSolver::HB_Operator_Complex(CConfig *config, vector<vector<su2double>>& D, vector<vector<su2double>>& E, int nInstHB, su2double Omega) {
+
+   int NT = nInstHB, NH = (NT-1)/2, i, j, k; 
+   su2double a = 2*PI_NUMBER/NT;
+
+   //vector<vector<su2double>> E(NT,vector<su2double>(NT,0.0));
+   vector<vector<su2double>> Einv(NT,vector<su2double>(NT,0.0));
+   //vector<vector<su2double>> D(NT,vector<su2double>(NT,0.0));
+   vector<vector<su2double>> A(NT,vector<su2double>(NT,0.0));
+   vector<vector<su2double>> tmp(NT,vector<su2double>(NT,0.0));
+
+
+   for (j=0;j<NT;j++) {
+	  E[0][j] = 1.0/NT;
+   } 
+   for (i=0;i<NH;i++) {
+   for (j=0;j<NT;j++) {
+	  E[2*i+1][j] = 2*cos(j*(i+1)*a)/NT;
+   }
+   }
+   for (i=0;i<NH;i++) {
+   for (j=0;j<NT;j++) {
+	  E[2*i+2][j] = 2*sin(j*(i+1)*a)/NT;
+   }
+   }
+
+   for (j=0;j<NT;j++) {
+	  Einv[j][0] = 1;
+   } 
+   for (j=0;j<NH;j++) {
+   for (i=0;i<NT;i++) {
+	  Einv[i][2*j+1] = cos(i*(j+1)*a);
+   }
+   }
+   for (j=0;j<NH;j++) {
+   for (i=0;i<NT;i++) {
+	  Einv[i][2*j+2] = sin(i*(j+1)*a);
+   }
+   }
+
+   for (i=0;i<NH;i++) {
+
+         A[2*i+1][2*i+2] = -(i+1);
+	 
+         A[2*i+2][2*i+1] =  (i+1);
+         
+   }
+
+   for (i=0;i<NT;i++) {
+   for (j=0;j<NT;j++) {	
+   for (k=0;k<NT;k++) {
+
+	  tmp[i][j] += A[i][k] * E[k][j];
+   
+   }
+   }
+   }
+   for (i=0;i<NT;i++) {
+   for (j=0;j<NT;j++) {	
+
+	  D[i][j] = - tmp[i][j];
+   
+   }
+   }
+
+}
+
 
 void CSolver::BasicLoadRestart(CGeometry *geometry, const CConfig *config, const string& filename, unsigned long skipVars) {
 

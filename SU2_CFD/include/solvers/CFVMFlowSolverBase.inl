@@ -1843,6 +1843,8 @@ void CFVMFlowSolverBase<V, FlowRegime>::Pressure_Forces(const CGeometry* geometr
   su2double RefLength = config->GetRefLength();
   auto Origin = config->GetRefOriginMoment(0);
   bool axisymmetric = config->GetAxisymmetric();
+  bool harmonic_balance = (config->GetTime_Marching() == TIME_MARCHING::HARMONIC_BALANCE);
+  unsigned short Instance =  config->GetiInst();
 
   SetReferenceValues(*config);
 
@@ -1898,6 +1900,12 @@ void CFVMFlowSolverBase<V, FlowRegime>::Pressure_Forces(const CGeometry* geometr
       NFPressOF = 0.0;
 
       /*--- Loop over the vertices to compute the forces ---*/
+     ///if (harmonic_balance) {
+     ///    cout << " (" << config->GetRefOriginMoment_X_HB(Instance) 
+     ///         << ", " << config->GetRefOriginMoment_Y_HB(Instance)
+     ///         << ", " << config->GetRefOriginMoment_Z_HB(Instance) << ")" << endl;
+     ///  }
+
 
       for (iVertex = 0; iVertex < geometry->GetnVertex(iMarker); iVertex++) {
         iPoint = geometry->vertex[iMarker][iVertex]->GetNode();
@@ -1919,8 +1927,15 @@ void CFVMFlowSolverBase<V, FlowRegime>::Pressure_Forces(const CGeometry* geometr
           NFPressOF += 0.5 * (Pressure - Pressure_Inf) * (Pressure - Pressure_Inf) * Normal[nDim - 1];
 
           su2double MomentDist[MAXNDIM] = {0.0};
+          if (!harmonic_balance) {
           for (iDim = 0; iDim < nDim; iDim++) {
             MomentDist[iDim] = Coord[iDim] - Origin[iDim];
+          }
+          }
+          else {
+            MomentDist[0] = Coord[0] - config->GetRefOriginMoment_X_HB(Instance);
+            MomentDist[1] = Coord[1] - config->GetRefOriginMoment_Y_HB(Instance);
+            MomentDist[2] = Coord[2] - config->GetRefOriginMoment_Z_HB(Instance);
           }
 
           /*--- Axisymmetric simulations ---*/

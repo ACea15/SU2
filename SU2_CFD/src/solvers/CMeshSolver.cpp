@@ -91,6 +91,8 @@ CMeshSolver::CMeshSolver(CGeometry *geometry, CConfig *config) : CFEASolver(LINE
   }
   static_cast<CMeshBoundVariable*>(nodes)->AllocateBoundaryVariables(config);
 
+  if (config->GetAeroelastic_Modal() || config->GetImposed_Modal_Move()) SetStructuralModes(geometry, config);
+  
   /*--- Initialize the element structure ---*/
 
   element.resize(nElement);
@@ -539,6 +541,139 @@ void CMeshSolver::DeformMesh(CGeometry **geometry, CNumerics **numerics, CConfig
 
 }
 
+void CMeshSolver::DeformMeshHB(CGeometry **geometry, CNumerics **numerics, CConfig *config, 
+		             unsigned long TimeIter){
+
+  if (multizone) nodes->Set_BGSSolution_k();
+
+  /*--- Capture a few MPI dependencies for AD. ---*/
+  geometry[MESH_0]->InitiateComms(geometry[MESH_0], config, COORDINATES);
+  geometry[MESH_0]->CompleteComms(geometry[MESH_0], config, COORDINATES);
+
+  InitiateComms(geometry[MESH_0], config, SOLUTION);
+  CompleteComms(geometry[MESH_0], config, SOLUTION);
+
+  InitiateComms(geometry[MESH_0], config, MESH_DISPLACEMENTS);
+  CompleteComms(geometry[MESH_0], config, MESH_DISPLACEMENTS);
+
+  /*--- Compute the stiffness matrix, no point recording because we clear the residual. ---*/
+
+  const bool wasActive = AD::BeginPassive();
+
+  Compute_StiffMatrix(geometry[MESH_0], numerics, config);
+
+  AD::EndPassive(wasActive);
+
+  /*--- Clear residual (loses AD info), we do not want an incremental solution. ---*/
+  SU2_OMP_PARALLEL {
+    LinSysRes.SetValZero();
+  }
+
+  /*--- Impose boundary conditions (all of them are ESSENTIAL BC's - displacements). ---*/
+  SetBoundaryDisplacementsHB(geometry[MESH_0], numerics[FEA_TERM], TimeIter, config);
+  
+  /*--- Solve the linear system. ---*/
+  Solve_System(geometry[MESH_0], config);
+  
+  SU2_OMP_PARALLEL {
+
+  /*--- Update the grid coordinates and cell volumes using the solution
+     of the linear system (usol contains the x, y, z displacements). ---*/
+  UpdateGridCoord(geometry[MESH_0], config);
+
+  /*--- Update the dual grid. ---*/
+  UpdateDualGrid(geometry[MESH_0], config);
+
+  /*--- The Grid Velocity is only computed if the problem is time domain ---*/
+  if (config->GetBnd_Velo()){
+  ComputeGridVelocity_FromBoundary(geometry, numerics, config); 
+  }
+  /*--- Update the multigrid structure. ---*/
+  UpdateMultiGrid(geometry, config);
+
+  /*--- Check for failed deformation (negative volumes). ---*/
+  SetMinMaxVolume(geometry[MESH_0], config, true);
+
+  } // end parallel
+
+}
+
+void CMeshSolver::AeroelasticDeformMesh(CGeometry **geometry, CNumerics **numerics, CConfig *config, su2double* structural_solution, unsigned long iter) {
+
+  vector<su2double> str_sol(4,0.0);
+  cout << "Disp at AeroDeformMesh = " ;
+  for (int i=0;i<4;i++) {
+	  str_sol[i] = structural_solution[i];
+
+	  cout << str_sol[i] << " ";
+  }
+  cout << endl;
+
+    Surface_Aeroelastic(geometry[MESH_0], config, str_sol, iter);
+
+  if (multizone) nodes->Set_BGSSolution_k();
+
+  /*--- Capture a few MPI dependencies for AD. ---*/
+  geometry[MESH_0]->InitiateComms(geometry[MESH_0], config, COORDINATES);
+  geometry[MESH_0]->CompleteComms(geometry[MESH_0], config, COORDINATES);
+
+  InitiateComms(geometry[MESH_0], config, SOLUTION);
+  CompleteComms(geometry[MESH_0], config, SOLUTION);
+
+  InitiateComms(geometry[MESH_0], config, MESH_DISPLACEMENTS);
+  CompleteComms(geometry[MESH_0], config, MESH_DISPLACEMENTS);
+
+  /*--- Compute the stiffness matrix, no point recording because we clear the residual. ---*/
+
+  const bool wasActive = AD::BeginPassive();
+
+  Compute_StiffMatrix(geometry[MESH_0], numerics, config);
+
+  AD::EndPassive(wasActive);
+
+  /*--- Clear residual (loses AD info), we do not want an incremental solution. ---*/
+  SU2_OMP_PARALLEL {
+    LinSysRes.SetValZero();
+  }
+
+  /*--- Impose boundary conditions (all of them are ESSENTIAL BC's - displacements). ---*/
+  SetBoundaryDisplacements(geometry[MESH_0], config, false);
+ 
+//  cout << endl << "boundary set." << endl;
+
+ 
+  /*--- Solve the linear system. ---*/
+  Solve_System(geometry[MESH_0], config);
+ 
+//  cout << endl << "system solved." << endl;
+
+ 
+  SU2_OMP_PARALLEL {
+
+  /*--- Update the grid coordinates and cell volumes using the solution
+     of the linear system (usol contains the x, y, z displacements). ---*/
+  UpdateGridCoord(geometry[MESH_0], config);
+
+  /*--- Update the dual grid. ---*/
+  UpdateDualGrid(geometry[MESH_0], config);
+
+//  cout << endl << "grid updated." << endl;
+
+
+  /*--- The Grid Velocity is only computed if the problem is time domain ---*/
+ // ComputeGridVelocity_FromBoundary(geometry, numerics, config); 
+   //ComputeGridVelocity(geometry[MESH_0], config);
+  //CompareGridVelocity(geometry[MESH_0], config);
+  /*--- Update the multigrid structure. ---*/
+  UpdateMultiGrid(geometry, config);
+
+  /*--- Check for failed deformation (negative volumes). ---*/
+  SetMinMaxVolume(geometry[MESH_0], config, true);
+
+  } // end parallel
+
+}
+
 void CMeshSolver::UpdateGridCoord(CGeometry *geometry, const CConfig *config){
 
   /*--- Update the grid coordinates using the solution of the linear system ---*/
@@ -562,6 +697,17 @@ void CMeshSolver::UpdateGridCoord(CGeometry *geometry, const CConfig *config){
   /*--- Communicate the updated displacements and mesh coordinates. ---*/
   geometry->InitiateComms(geometry, config, COORDINATES);
   geometry->CompleteComms(geometry, config, COORDINATES);
+
+}
+
+void CMeshSolver::UpdateDualGrid(CGeometry *geometry, CConfig *config){
+
+  /*--- After moving all nodes, update the dual mesh. Recompute the edges and
+   dual mesh control volumes in the domain and on the boundaries. ---*/
+
+  geometry->SetControlVolume(config, UPDATE);
+  geometry->SetBoundControlVolume(config, UPDATE);
+  geometry->SetMaxLength(config);
 
 }
 
@@ -611,6 +757,23 @@ void CMeshSolver::ComputeGridVelocity_FromBoundary(CGeometry **geometry, CNumeri
       geometry[iMGlevel]->SetRestricted_GridVelocity(geometry[iMGlevel-1]);
   }
   END_SU2_OMP_PARALLEL
+
+}
+
+void CMeshSolver::UpdateMultiGrid(CGeometry **geometry, CConfig *config) const{
+
+  /*--- Update the multigrid structure after moving the finest grid,
+   including computing the grid velocities on the coarser levels
+   when the problem is solved in unsteady conditions. ---*/
+
+  for (auto iMGlevel = 1u; iMGlevel <= config->GetnMGLevels(); iMGlevel++) {
+    const auto iMGfine = iMGlevel-1;
+    // geometry[iMGlevel]->SetControlVolume(config, geometry[iMGfine], UPDATE);
+    // geometry[iMGlevel]->SetBoundControlVolume(config, geometry[iMGfine],UPDATE);
+    geometry[iMGlevel]->SetCoord(geometry[iMGfine]);
+    if (time_domain)
+      geometry[iMGlevel]->SetRestricted_GridVelocity(geometry[iMGfine]);
+  }
 
 }
 
@@ -675,7 +838,10 @@ void CMeshSolver::SetBoundaryDisplacements(CGeometry *geometry, CConfig *config,
    * The derivatives are still correct since the motion does not depend on the solution,
    * but this means that (for now) we cannot get derivatives w.r.t. motion parameters. */
 
-  if (config->GetSurface_Movement(DEFORMING) && !config->GetDiscrete_Adjoint()) {
+  // if (rank == MASTER_NODE) cout << "Set Boundary Conditions:" << endl;
+  // string Marker_Tag, Moving_Tag;
+
+  if (config->GetSurface_Movement(DEFORMING) && !config->GetDiscrete_Adjoint() && !config->GetAeroelastic_Modal() && !config->GetAeroelasticity_HB()) {
     if (velocity_transfer)
       SU2_MPI::Error("Forced motions are not compatible with FSI simulations.", CURRENT_FUNCTION);
 
@@ -748,6 +914,137 @@ void CMeshSolver::SetBoundaryDisplacements(CGeometry *geometry, CConfig *config,
           break;
         }
       }
+    }
+  }
+
+}
+
+void CMeshSolver::SetBoundaryVelocities(CGeometry *geometry, CNumerics *numerics, CConfig *config){
+
+  unsigned short iMarker;
+
+  /*--- Impose zero displacements of all non-moving surfaces (also at nodes in multiple moving/non-moving boundaries). ---*/
+  /*--- Exceptions: symmetry plane, the receive boundaries and periodic boundaries should get a different treatment. ---*/
+  for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
+    if ((config->GetMarker_All_Deform_Mesh(iMarker) == NO) &&
+        (config->GetMarker_All_Moving(iMarker) == NO) &&
+        (config->GetMarker_All_KindBC(iMarker) != SYMMETRY_PLANE) &&
+        (config->GetMarker_All_KindBC(iMarker) != SEND_RECEIVE) &&
+        (config->GetMarker_All_KindBC(iMarker) != PERIODIC_BOUNDARY)) {
+
+      BC_Clamped(geometry, config, iMarker);
+    }
+  }
+
+  /*--- Symmetry plane is clamped, for now. ---*/
+  for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
+    if ((config->GetMarker_All_Deform_Mesh(iMarker) == NO) &&
+        (config->GetMarker_All_Moving(iMarker) == NO) &&
+        (config->GetMarker_All_KindBC(iMarker) == SYMMETRY_PLANE)) {
+
+      BC_Clamped(geometry, config, iMarker);
+    }
+  }
+
+  /*--- Impose velocity boundary conditions. ---*/
+  for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
+    if ((config->GetMarker_All_Deform_Mesh(iMarker) == YES) ||
+        (config->GetMarker_All_Moving(iMarker) == YES)) {
+
+	    cout << "DEFORMING" << endl;
+	    
+            cout << "Marker= " << config->GetMarker_All_TagBound(iMarker) << endl;
+
+      BC_Velocity(geometry, numerics, config, iMarker);
+    }
+  }
+
+  /*--- Clamp far away nodes according to deform limit. ---*/
+  if ((config->GetDeform_Stiffness_Type() == SOLID_WALL_DISTANCE) &&
+      (config->GetDeform_Limit() < MaxDistance)) {
+
+    const su2double limit = config->GetDeform_Limit() / MaxDistance;
+
+    for (auto iPoint = 0ul; iPoint < nPoint; ++iPoint) {
+      if (nodes->GetWallDistance(iPoint) <= limit) continue;
+
+      su2double zeros[MAXNVAR] = {0.0};
+      nodes->SetSolution(iPoint, zeros);
+      LinSysSol.SetBlock(iPoint, zeros);
+      Jacobian.EnforceSolutionAtNode(iPoint, zeros, LinSysRes);
+    }
+  }
+}
+
+void CMeshSolver::SetBoundaryDisplacementsHB(CGeometry *geometry, CNumerics *numerics, unsigned long TimeIter, CConfig *config){
+
+  /* Surface motions are not applied during discrete adjoint runs as the corresponding
+   * boundary displacements are computed when loading the primal solution, and it
+   * would be complex to account for the incremental nature of these motions.
+   * The derivatives are still correct since the motion does not depend on the solution,
+   * but this means that (for now) we cannot get derivatives w.r.t. motion parameters. */
+
+  bool harmonic_balance = (config->GetTime_Marching() == TIME_MARCHING::HARMONIC_BALANCE);
+
+  if (config->GetSurface_Movement(DEFORMING) && !config->GetDiscrete_Adjoint() && !config->GetAeroelastic_Modal() && !config->GetImposed_Modal_Move()) {
+
+    if (rank == MASTER_NODE)
+      cout << endl << " Updating surface positions HB." << endl;
+
+    //Surface_Translating(geometry, config, TimeIter);
+    Surface_Plunging(geometry, config, TimeIter);
+    Surface_Pitching(geometry, config, TimeIter);
+    //Surface_Rotating(geometry, config, TimeIter); 
+
+  }
+
+  unsigned short iMarker;
+
+  /*--- Impose zero displacements of all non-moving surfaces (also at nodes in multiple moving/non-moving boundaries). ---*/
+  /*--- Exceptions: symmetry plane, the receive boundaries and periodic boundaries should get a different treatment. ---*/
+  for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
+    if ((config->GetMarker_All_Deform_Mesh(iMarker) == NO) &&
+        (config->GetMarker_All_Moving(iMarker) == NO) &&
+        (config->GetMarker_All_KindBC(iMarker) != SYMMETRY_PLANE) &&
+        (config->GetMarker_All_KindBC(iMarker) != SEND_RECEIVE) &&
+        (config->GetMarker_All_KindBC(iMarker) != PERIODIC_BOUNDARY)) {
+
+      BC_Clamped(geometry, config, iMarker);
+    }
+  }
+
+  /*--- Symmetry plane is clamped, for now. ---*/
+  for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
+    if ((config->GetMarker_All_Deform_Mesh(iMarker) == NO) &&
+        (config->GetMarker_All_Moving(iMarker) == NO) &&
+        (config->GetMarker_All_KindBC(iMarker) == SYMMETRY_PLANE)) {
+
+      BC_Clamped(geometry, config, iMarker);
+    }
+  }
+
+  /*--- Impose displacement boundary conditions. ---*/
+  for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
+    if ((config->GetMarker_All_Deform_Mesh(iMarker) == YES) ||
+        (config->GetMarker_All_Moving(iMarker) == YES)) {
+
+      BC_Deforming(geometry, config, iMarker, false);
+    }
+  }
+
+  /*--- Clamp far away nodes according to deform limit. ---*/
+  if ((config->GetDeform_Stiffness_Type() == SOLID_WALL_DISTANCE) &&
+      (config->GetDeform_Limit() < MaxDistance)) {
+
+    const su2double limit = config->GetDeform_Limit() / MaxDistance;
+
+    for (auto iPoint = 0ul; iPoint < nPoint; ++iPoint) {
+      if (nodes->GetWallDistance(iPoint) <= limit) continue;
+
+      su2double zeros[MAXNVAR] = {0.0};
+      nodes->SetSolution(iPoint, zeros);
+      LinSysSol.SetBlock(iPoint, zeros);
+      Jacobian.EnforceSolutionAtNode(iPoint, zeros, LinSysRes);
     }
   }
 
@@ -968,27 +1265,43 @@ void CMeshSolver::Surface_Pitching(CGeometry *geometry, CConfig *config, unsigne
 
   su2double deltaT, time_new, time_old, Lref;
   const su2double* Coord = nullptr;
-  su2double Center[3] = {0.0}, VarCoord[3] = {0.0}, Omega[3] = {0.0}, Ampl[3] = {0.0}, Phase[3] = {0.0};
+  su2double Center[3] = {0.0}, VarCoord[3] = {0.0}, VelCoord[3] = {0.0}, Omega[3] = {0.0}, Ampl[3] = {0.0}, Phase[3] = {0.0};
   su2double VarCoordAbs[3] = {0.0};
+  su2double alphaDot[3], newGridVel[3] = {0.0,0.0,0.0};
   su2double rotCoord[3] = {0.0}, r[3] = {0.0};
   su2double rotMatrix[3][3] = {{0.0}};
   su2double dtheta, dphi, dpsi;
   const su2double DEG2RAD = PI_NUMBER/180.0;
   unsigned short iMarker, jMarker, iDim;
   unsigned long iPoint, iVertex;
+  bool harmonic_balance = (config->GetTime_Marching() == TIME_MARCHING::HARMONIC_BALANCE);
   string Marker_Tag, Moving_Tag;
 
+  bool hbaero  = config->GetAeroelasticity_HB();
   /*--- Retrieve values from the config file ---*/
 
   deltaT = config->GetDelta_UnstTimeND();
   Lref   = config->GetLength_Ref();
 
   /*--- Compute delta time based on physical time step ---*/
+  if (harmonic_balance) {
+    /*--- period of oscillation & time interval using nTimeInstances ---*/
+    su2double period = config->GetHarmonicBalance_Period();
+    period /= config->GetTime_Ref();
+    su2double TimeInstances = config->GetnTimeInstances();
+    deltaT = period/TimeInstances;
+  }
+  
 
   time_new = iter*deltaT;
+  if (harmonic_balance) {
+      /*--- For harmonic balance, begin movement from the zero position ---*/
+      time_old = 0.0;
+  }
+  else {
   if (iter == 0) time_old = time_new;
   else time_old = (iter-1)*deltaT;
-
+  }
   /*--- Store displacement of each node on the pitching surface ---*/
   /*--- Loop over markers and find the particular marker(s) (surface) to pitch ---*/
 
@@ -1042,6 +1355,16 @@ void CMeshSolver::Surface_Pitching(CGeometry *geometry, CConfig *config, unsigne
       dpsi   = -Ampl[2]*(sin(Omega[2]*time_new + Phase[2])
                        - sin(Omega[2]*time_old + Phase[2]));
 
+      if (hbaero) config->SetHB_pitch(-dpsi,iter);
+
+      /*--- Angular velocity at the new time ---*/
+
+      alphaDot[0] = -Omega[0]*Ampl[0]*cos(Omega[0]*time_new);
+      alphaDot[1] = -Omega[1]*Ampl[1]*cos(Omega[1]*time_new);
+      alphaDot[2] = -Omega[2]*Ampl[2]*cos(Omega[2]*time_new);
+
+      if (hbaero) config->SetHB_pitch_rate(-alphaDot[2],iter);
+
       /*--- Compute rotation matrix. ---*/
 
       RotationMatrix(dtheta, dphi, dpsi, rotMatrix);
@@ -1054,6 +1377,7 @@ void CMeshSolver::Surface_Pitching(CGeometry *geometry, CConfig *config, unsigne
 
         iPoint = geometry->vertex[iMarker][iVertex]->GetNode();
         Coord  = geometry->nodes->GetCoord(iPoint);
+        //GridVel = geometry->nodes->GetGridVel(iPoint);
 
         /*--- Calculate non-dim. position from rotation center ---*/
 
@@ -1062,18 +1386,41 @@ void CMeshSolver::Surface_Pitching(CGeometry *geometry, CConfig *config, unsigne
 
         /*--- Compute transformed point coordinates ---*/
 
-        Rotate(rotMatrix, Center, r, rotCoord);
+    
+     	Rotate(rotMatrix, Center, r, rotCoord);
+
+     
+    	/*--- Cross Product of angular velocity and distance from center.
+    	 Note that we have assumed the grid velocities have been set to
+         an initial value in the plunging routine. ---*/
+       
 
         /*--- Calculate delta change in the x, y, & z directions ---*/
-        for (iDim = 0; iDim < nDim; iDim++)
+        for (iDim = 0; iDim < nDim; iDim++){
           VarCoord[iDim] = (rotCoord[iDim]-Coord[iDim])/Lref;
+          VelCoord[iDim] = (rotCoord[iDim]-Center[iDim])/Lref;
+	}
+	
+	newGridVel[0] =  alphaDot[1]*VelCoord[2] - alphaDot[2]*VelCoord[1];
+        newGridVel[1] =  alphaDot[2]*VelCoord[0] - alphaDot[0]*VelCoord[2];
+        if (nDim == 3) newGridVel[2] = alphaDot[0]*VelCoord[1] - alphaDot[1]*VelCoord[0];
 
-        /*--- Set node displacement for volume deformation ---*/
+//	newGridVel[0] =  alphaDot[1]*rotCoord[2] - alphaDot[2]*rotCoord[1];
+  //      newGridVel[1] =  alphaDot[2]*rotCoord[0] - alphaDot[0]*rotCoord[2];
+    //    if (nDim == 3) newGridVel[2] = alphaDot[0]*rotCoord[1] - alphaDot[1]*rotCoord[0];
 
-        for (iDim = 0; iDim < nDim; iDim++)
+        /*--- Set node displacement for volume deformation ---*/	
+
+        for (iDim = 0; iDim < nDim; iDim++){
           VarCoordAbs[iDim] = nodes->GetBound_Disp(iPoint, iDim) + VarCoord[iDim];
+          newGridVel[iDim] += nodes->GetBound_Vel(iPoint, iDim);
+  //         geometry->nodes->SetGridVel(iPoint, iDim, newGridVel[iDim]);
+	}
 
         nodes->SetBound_Disp(iPoint, VarCoordAbs);
+
+        //if (harmonic_balance) 
+	nodes->SetBound_Vel(iPoint, newGridVel);
       }
     }
   }
@@ -1086,12 +1433,15 @@ void CMeshSolver::Surface_Rotating(CGeometry *geometry, CConfig *config, unsigne
   su2double deltaT, time_new, time_old, Lref;
   const su2double* Coord = nullptr;
   su2double VarCoordAbs[3] = {0.0};
-  su2double Center[3] = {0.0}, VarCoord[3] = {0.0}, Omega[3] = {0.0},
-  rotCoord[3] = {0.0}, r[3] = {0.0}, Center_Aux[3] = {0.0};
+  su2double Center[3] = {0.0}, VarCoord[3] = {0.0}, VelCoord[3] = {0.0},
+	    Omega[3] = {0.0}, rotCoord[3] = {0.0}, r[3] = {0.0}, 
+	    Center_Aux[3] = {0.0};
+  su2double newGridVel[3] = {0.0,0.0,0.0}; 
   su2double rotMatrix[3][3] = {{0.0}};
   su2double dtheta, dphi, dpsi;
   unsigned short iMarker, jMarker, iDim;
   unsigned long iPoint, iVertex;
+  bool harmonic_balance = (config->GetTime_Marching() == TIME_MARCHING::HARMONIC_BALANCE);
   string Marker_Tag, Moving_Tag;
 
   /*--- Retrieve values from the config file ---*/
@@ -1099,12 +1449,25 @@ void CMeshSolver::Surface_Rotating(CGeometry *geometry, CConfig *config, unsigne
   deltaT = config->GetDelta_UnstTimeND();
   Lref   = config->GetLength_Ref();
 
+  /*-- Set dt for harmonic balance cases ---*/
+  if (harmonic_balance) {
+    /*--- period of oscillation & compute time interval using nTimeInstances ---*/
+    su2double period = config->GetHarmonicBalance_Period();
+    period /= config->GetTime_Ref();
+    su2double TimeInstances = config->GetnTimeInstances();
+    deltaT = period /TimeInstances;
+  }
+
   /*--- Compute delta time based on physical time step ---*/
 
   time_new = iter*deltaT;
-  if (iter == 0) time_old = time_new;
-  else time_old = (iter-1)*deltaT;
-
+  if (harmonic_balance) {
+      /*--- For harmonic balance, begin movement from the zero position ---*/
+      time_old = 0.0;
+  } else {
+      time_old = time_new;
+      if (iter != 0) time_old = (iter-1)*deltaT;
+  }
   /*--- Store displacement of each node on the rotating surface ---*/
   /*--- Loop over markers and find the particular marker(s) (surface) to rotate ---*/
 
@@ -1160,6 +1523,7 @@ void CMeshSolver::Surface_Rotating(CGeometry *geometry, CConfig *config, unsigne
 
         iPoint = geometry->vertex[iMarker][iVertex]->GetNode();
         Coord  = geometry->nodes->GetCoord(iPoint);
+        //GridVel = geometry->nodes->GetGridVel(iPoint);
 
         /*--- Calculate non-dim. position from rotation center ---*/
 
@@ -1170,15 +1534,28 @@ void CMeshSolver::Surface_Rotating(CGeometry *geometry, CConfig *config, unsigne
 
         Rotate(rotMatrix, Center, r, rotCoord);
 
-        /*--- Calculate delta change in the x, y, & z directions ---*/
-        for (iDim = 0; iDim < nDim; iDim++)
+	/*--- Calculate delta change in the x, y, & z directions ---*/
+        for (iDim = 0; iDim < nDim; iDim++){
           VarCoord[iDim] = (rotCoord[iDim]-Coord[iDim])/Lref;
+	  VelCoord[iDim] = (rotCoord[iDim]-Center[iDim])/Lref;
+	}
+
+	newGridVel[0] = Omega[1]*VelCoord[2] - Omega[2]*VelCoord[1];
+	newGridVel[1] = Omega[2]*VelCoord[0] - Omega[0]*VelCoord[2];
+        if (nDim == 3)newGridVel[2] = Omega[0]*VelCoord[1] - Omega[1]*VelCoord[0];
+
 
         /*--- Set node displacement for volume deformation ---*/
-        for (iDim = 0; iDim < nDim; iDim++)
+        for (iDim = 0; iDim < nDim; iDim++){
           VarCoordAbs[iDim] = nodes->GetBound_Disp(iPoint, iDim) + VarCoord[iDim];
+	  newGridVel[iDim] += nodes->GetBound_Vel(iPoint, iDim); 
+         // if (harmonic_balance) geometry->nodes->SetGridVel(iPoint, iDim, newGridVel[iDim]);
+        }
 
         nodes->SetBound_Disp(iPoint, VarCoordAbs);
+
+        //if (harmonic_balance)
+	nodes->SetBound_Vel(iPoint, newGridVel);
       }
     }
   }
@@ -1249,24 +1626,42 @@ void CMeshSolver::Surface_Rotating(CGeometry *geometry, CConfig *config, unsigne
 void CMeshSolver::Surface_Plunging(CGeometry *geometry, CConfig *config, unsigned long iter) {
 
   su2double deltaT, time_new, time_old, Lref;
-  su2double Center[3] = {0.0}, VarCoord[3] = {0.0}, Omega[3] = {0.0}, Ampl[3] = {0.0};
+  su2double Center[3] = {0.0}, VarCoord[3] = {0.0}, Omega[3] = {0.0}, Ampl[3] = {0.0}, Phase[3] = {0.0};
   su2double VarCoordAbs[3] = {0.0};
+  su2double newGridVel[3] = {0.0, 0.0, 0.0}, xDot[3];
   const su2double DEG2RAD = PI_NUMBER/180.0;
   unsigned short iMarker, jMarker;
   unsigned long iPoint, iVertex;
   string Marker_Tag, Moving_Tag;
+  bool harmonic_balance = (config->GetTime_Marching() == TIME_MARCHING::HARMONIC_BALANCE);
   unsigned short iDim;
 
+  bool hbaero  = config->GetAeroelasticity_HB();
   /*--- Retrieve values from the config file ---*/
 
   deltaT = config->GetDelta_UnstTimeND();
   Lref   = config->GetLength_Ref();
 
+  su2double b = Lref/2;
   /*--- Compute delta time based on physical time step ---*/
 
+    if (harmonic_balance) {
+    /*--- period of oscillation & time interval using nTimeInstances ---*/
+    su2double period = config->GetHarmonicBalance_Period();
+    period /= config->GetTime_Ref();
+    su2double TimeInstances = config->GetnTimeInstances();
+    deltaT = period/TimeInstances;
+  }
+
   time_new = iter*deltaT;
-  if (iter == 0) time_old = time_new;
-  else time_old = (iter-1)*deltaT;
+  if (harmonic_balance) {
+      /*--- For harmonic balance, begin movement from the zero position ---*/
+      time_old = 0.0;
+    } else {
+      time_old = time_new;
+      if (iter != 0) time_old = (iter-1)*deltaT;
+    }
+  
 
   /*--- Store displacement of each node on the plunging surface ---*/
   /*--- Loop over markers and find the particular marker(s) (surface) to plunge ---*/
@@ -1290,6 +1685,7 @@ void CMeshSolver::Surface_Plunging(CGeometry *geometry, CConfig *config, unsigne
         Ampl[iDim]   = config->GetMarkerPlunging_Ampl(jMarker, iDim)/Lref;
         Omega[iDim]  = config->GetMarkerPlunging_Omega(jMarker, iDim)/config->GetOmega_Ref();
         Center[iDim] = config->GetMarkerMotion_Origin(jMarker, iDim);
+        Phase[iDim]  = config->GetMarkerPlunging_Phase(jMarker, iDim);
       }
 
       /*--- Print some information to the console. Be verbose at the first
@@ -1297,6 +1693,7 @@ void CMeshSolver::Surface_Plunging(CGeometry *geometry, CConfig *config, unsigne
       // Note that the MASTER_NODE might not contain all the markers being moved.
 
       if (rank == MASTER_NODE) {
+        cout << " Physical Time = " << time_new << endl;
         cout << " Storing plunging displacement for marker: ";
         cout << Marker_Tag << "." << endl;
         if (iter == 0) {
@@ -1310,9 +1707,18 @@ void CMeshSolver::Surface_Plunging(CGeometry *geometry, CConfig *config, unsigne
 
       /*--- Compute delta change in the position in the x, y, & z directions. ---*/
 
-      VarCoord[0] = -Ampl[0]*(sin(Omega[0]*time_new) - sin(Omega[0]*time_old));
-      VarCoord[1] = -Ampl[1]*(sin(Omega[1]*time_new) - sin(Omega[1]*time_old));
-      VarCoord[2] = -Ampl[2]*(sin(Omega[2]*time_new) - sin(Omega[2]*time_old));
+      VarCoord[0] = -Ampl[0]*(sin(Omega[0]*time_new + Phase[0]) - sin(Omega[0]*time_old));
+      VarCoord[1] = -Ampl[1]*(sin(Omega[1]*time_new + Phase[1]) - sin(Omega[1]*time_old));
+      VarCoord[2] = -Ampl[2]*(sin(Omega[2]*time_new + Phase[2]) - sin(Omega[2]*time_old));
+
+      if (hbaero)  config->SetHB_plunge(-VarCoord[1]/b,iter);
+
+      /*--- Compute grid velocity due to plunge in the x, y, & z directions. ---*/
+      xDot[0] = -Ampl[0]*Omega[0]*(cos(Omega[0]*time_new + Phase[0]));
+      xDot[1] = -Ampl[1]*Omega[1]*(cos(Omega[1]*time_new + Phase[1]));
+      xDot[2] = -Ampl[2]*Omega[2]*(cos(Omega[2]*time_new + Phase[2]));
+
+      if (hbaero) config->SetHB_plunge_rate(-xDot[1],iter);
 
       for (iVertex = 0; iVertex < geometry->nVertex[iMarker]; iVertex++) {
 
@@ -1320,10 +1726,17 @@ void CMeshSolver::Surface_Plunging(CGeometry *geometry, CConfig *config, unsigne
 
         iPoint = geometry->vertex[iMarker][iVertex]->GetNode();
 
-        for (iDim = 0; iDim < nDim; iDim++)
+     	newGridVel[0] = xDot[0];
+	newGridVel[1] = xDot[1];
+     	if (nDim == 3) newGridVel[2] = xDot[2];
+
+        for (iDim = 0; iDim < nDim; iDim++) {
           VarCoordAbs[iDim] = nodes->GetBound_Disp(iPoint, iDim) + VarCoord[iDim];
+	  newGridVel[iDim] += nodes->GetBound_Vel(iPoint, iDim);
+        }
 
         nodes->SetBound_Disp(iPoint, VarCoordAbs);
+	nodes->SetBound_Vel(iPoint, newGridVel);
 
       }
     }
@@ -1340,17 +1753,20 @@ void CMeshSolver::Surface_Plunging(CGeometry *geometry, CConfig *config, unsigne
 
     /*-- Check if we want to update the motion origin for the given marker ---*/
 
+    if (!harmonic_balance) {
     if (config->GetMoveMotion_Origin(jMarker) == YES) {
       for (iDim = 0; iDim < 3; iDim++)
         Center[iDim] += VarCoord[iDim];
 
       config->SetMarkerMotion_Origin(Center, jMarker);
     }
+    }
   }
 
   /*--- Set the moment computation center to the new location after
    incrementing the position with the plunging. ---*/
 
+  if (!harmonic_balance) {
   for (jMarker=0; jMarker < config->GetnMarker_Monitoring(); jMarker++) {
     Center[0] = config->GetRefOriginMoment_X(jMarker) + VarCoord[0];
     Center[1] = config->GetRefOriginMoment_Y(jMarker) + VarCoord[1];
@@ -1359,29 +1775,50 @@ void CMeshSolver::Surface_Plunging(CGeometry *geometry, CConfig *config, unsigne
     config->SetRefOriginMoment_Y(jMarker, Center[1]);
     config->SetRefOriginMoment_Z(jMarker, Center[2]);
   }
+  }
+  else {
+    Center[0] = config->GetRefOriginMoment_X(0) + VarCoord[0];
+    Center[1] = config->GetRefOriginMoment_Y(0) + VarCoord[1];
+    Center[2] = config->GetRefOriginMoment_Z(0) + VarCoord[2];
+    config->SetRefOriginMoment_X_HB(iter, Center[0]);
+    config->SetRefOriginMoment_Y_HB(iter, Center[1]);
+    config->SetRefOriginMoment_Z_HB(iter, Center[2]);
+  }
+
 }
 
 void CMeshSolver::Surface_Translating(CGeometry *geometry, CConfig *config, unsigned long iter) {
 
   su2double deltaT, time_new, time_old;
-  su2double Center[3] = {0.0}, VarCoord[3] = {0.0};
+  su2double Center[3] = {0.0}, newGridVel[3] = {0.0}, VarCoord[3] = {0.0};
   su2double VarCoordAbs[3] = {0.0};
   su2double xDot[3] = {0.0};
   unsigned short iMarker, jMarker;
   unsigned long iPoint, iVertex;
   string Marker_Tag, Moving_Tag;
+  bool harmonic_balance = (config->GetTime_Marching() == TIME_MARCHING::HARMONIC_BALANCE);
   unsigned short iDim;
 
   /*--- Retrieve values from the config file ---*/
 
   deltaT = config->GetDelta_UnstTimeND();
-
+  if (harmonic_balance) {
+    /*--- period of oscillation & time interval using nTimeInstances ---*/
+    su2double period = config->GetHarmonicBalance_Period();
+    period /= config->GetTime_Ref();
+    su2double TimeInstances = config->GetnTimeInstances();
+    deltaT = period/TimeInstances;
+  }
   /*--- Compute delta time based on physical time step ---*/
 
   time_new = iter*deltaT;
-  if (iter == 0) time_old = time_new;
-  else time_old = (iter-1)*deltaT;
-
+  if (harmonic_balance) {
+      /*--- For harmonic balance, begin movement from the zero position ---*/
+      time_old = 0.0;  
+  } else {
+      time_old = time_new;
+      if (iter != 0) time_old = (iter-1.0)*deltaT;  
+  }  
   /*--- Store displacement of each node on the translating surface ---*/
   /*--- Loop over markers and find the particular marker(s) (surface) to translate ---*/
 
@@ -1410,6 +1847,7 @@ void CMeshSolver::Surface_Translating(CGeometry *geometry, CConfig *config, unsi
       if (rank == MASTER_NODE) {
         cout << " Storing translating displacement for marker: ";
         cout << Marker_Tag << "." << endl;
+	cout << " Physical Time = " << time_new << endl;
         if (iter == 0) {
           cout << " Translational velocity: (" << xDot[0]*config->GetVelocity_Ref() << ", " << xDot[1]*config->GetVelocity_Ref();
           cout << ", " << xDot[2]*config->GetVelocity_Ref();
@@ -1430,10 +1868,13 @@ void CMeshSolver::Surface_Translating(CGeometry *geometry, CConfig *config, unsi
 
         iPoint = geometry->vertex[iMarker][iVertex]->GetNode();
 
-        for (iDim = 0; iDim < nDim; iDim++)
+        for (iDim = 0; iDim < nDim; iDim++){
           VarCoordAbs[iDim] = nodes->GetBound_Disp(iPoint, iDim) + VarCoord[iDim];
+	  newGridVel[iDim]  = xDot[iDim];
+        }
 
         nodes->SetBound_Disp(iPoint, VarCoordAbs);
+	nodes->SetBound_Vel(iPoint, newGridVel);
       }
     }
   }
@@ -1468,4 +1909,756 @@ void CMeshSolver::Surface_Translating(CGeometry *geometry, CConfig *config, unsi
     config->SetRefOriginMoment_Y(jMarker, Center[1]);
     config->SetRefOriginMoment_Z(jMarker, Center[2]);
   }
+}
+
+void CMeshSolver::Surface_Aeroelastic(CGeometry *geometry, CConfig *config, vector<su2double> &structural_solution, unsigned long iter) {
+
+  su2double deltaT, time_new, time_old, Lref;
+  const su2double* Coord = nullptr;
+  su2double Center[3] = {0.0}, CenterOrg[3] = {0.0}, VarCoord[3] = {0.0}, VelCoord[3] = {0.0}, dU[3] = {0.0};
+  su2double VarCoordAbs[3] = {0.0}, xDot[3];
+  su2double alphaDot[3], newGridVel[3] = {0.0,0.0,0.0};
+  su2double rotCoord[3] = {0.0}, r[3] = {0.0};
+  su2double rotMatrix[3][3] = {{0.0}};
+  su2double dtheta, dphi, dpsi;
+  const su2double DEG2RAD = PI_NUMBER/180.0;
+  unsigned short iMarker, jMarker, iDim;
+  unsigned long iPoint, iVertex;
+  bool harmonic_balance = (config->GetTime_Marching() == TIME_MARCHING::HARMONIC_BALANCE);
+  string Marker_Tag, Moving_Tag;
+
+  Lref   = config->GetLength_Ref();
+
+  for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
+    if (config->GetMarker_All_Moving(iMarker) != YES) continue;
+
+    Marker_Tag = config->GetMarker_All_TagBound(iMarker);
+
+    for (jMarker = 0; jMarker < config->GetnMarker_Moving(); jMarker++) {
+
+      Moving_Tag = config->GetMarker_Moving_TagBound(jMarker);
+
+     // if ((Marker_Tag != Moving_Tag) || (config->GetKind_SurfaceMovement(jMarker) != DEFORMING)) {
+       // continue;
+      //}
+
+      if (rank == MASTER_NODE) {
+        cout << " Storing plunging & Pitching displacement for marker: ";
+        cout << Marker_Tag << "." << endl; 
+      }
+
+      cout<< "STR SOL"<<endl;
+      for (int i=0;i<4;i++){
+      cout << structural_solution[i] << " ";
+      }
+      cout << endl;
+      /*--- Compute delta change in the position in the x, y, & z directions. ---*/
+
+      dU[0] = 0.0;
+      dU[1] = -structural_solution[0];
+      dU[2] = 0.0;
+
+      /*--- Compute grid velocity due to plunge in the x, y, & z directions. ---*/
+      xDot[0] = 0.0;
+      xDot[1] = -structural_solution[2];
+      xDot[2] = 0.0;
+
+      /*--- Compute delta change in the angle about the x, y, & z axes. ---*/
+ 
+      dtheta = 0.0; 
+      dphi   = 0.0;     
+      dpsi   = -structural_solution[1];
+
+      /*--- Angular velocity at the new time ---*/
+      alphaDot[0] = 0.0;
+      alphaDot[1] = 0.0;
+      alphaDot[2] = -structural_solution[3];
+      /*--- Compute rotation matrix. ---*/
+
+      RotationMatrix(dtheta, dphi, dpsi, rotMatrix);
+
+      /*--- Apply rotation to the vertices. ---*/
+
+
+ //   if (config->GetMoveMotion_Origin(jMarker) == YES) {
+ //   for (iDim = 0; iDim < 3; iDim++)
+ //     Center[iDim] += dU[iDim];
+
+ //   config->SetMarkerMotion_Origin(Center, jMarker);
+ //   }
+    	Center[0] = config->GetRefOriginMoment_X(jMarker);
+   	Center[1] = config->GetRefOriginMoment_Y(jMarker);
+    	Center[2] = config->GetRefOriginMoment_Z(jMarker);
+	
+  	cout << "Center= (" ;
+    	for (iDim = 0; iDim < 3; iDim++){
+	     	cout << Center[iDim] << " " ;
+	}
+        cout << ")" << endl;
+
+   
+      for (iVertex = 0; iVertex < geometry->nVertex[iMarker]; iVertex++) {
+
+        /*--- Index and coordinates of the current point ---*/
+
+        iPoint = geometry->vertex[iMarker][iVertex]->GetNode();
+        //
+	if (harmonic_balance){
+        for (iDim = 0; iDim < nDim; iDim++){
+           su2double val_coord = nodes->GetMesh_Coord(iPoint,iDim);
+           geometry->nodes->SetCoord(iPoint, iDim, val_coord);
+	}
+	}
+        Coord  = geometry->nodes->GetCoord(iPoint);
+        //GridVel = geometry->nodes->GetGridVel(iPoint);
+
+        /*--- Calculate non-dim. position from rotation center ---*/
+
+	newGridVel[0] = xDot[0];
+	newGridVel[1] = xDot[1];
+     	if (nDim == 3) newGridVel[2] = xDot[2];
+
+        for (iDim = 0; iDim < nDim; iDim++){
+         r[iDim] = (Coord[iDim]-Center[iDim])/Lref;
+	}
+        /*--- Compute transformed point coordinates ---*/
+ 
+     	Rotate(rotMatrix, Center, r, rotCoord);
+     
+    	/*--- Cross Product of angular velocity and distance from center.
+    	 Note that we have assumed the grid velocities have been set to
+         an initial value in the plunging routine. ---*/       
+
+        /*--- Calculate delta change in the x, y, & z directions ---*/
+        for (iDim = 0; iDim < nDim; iDim++){
+          VarCoord[iDim] = (rotCoord[iDim]-Coord[iDim])/Lref;
+          VelCoord[iDim] = (rotCoord[iDim]-Center[iDim])/Lref;
+	}
+	
+	newGridVel[0] +=  - alphaDot[2]*VelCoord[1];
+        newGridVel[1] +=  alphaDot[2]*VelCoord[0] ;
+        if (nDim == 3) newGridVel[2] += 0;
+
+	/*--- Set node displacement for volume deformation ---*/	
+
+        for (iDim = 0; iDim < nDim; iDim++){
+
+	  if (harmonic_balance) VarCoordAbs[iDim] = dU[iDim] + VarCoord[iDim]; 
+//	  else VarCoordAbs[iDim] = dU[iDim] + VarCoord[iDim];
+	  else VarCoordAbs[iDim] = nodes->GetBound_Disp(iPoint, iDim) + dU[iDim] + VarCoord[iDim];
+        }
+
+	//cout << "BND Velo_y = " << newGridVel[1] << endl;
+
+       	//geometry->vertex[iMarker][iVertex]->SetVarCoord(VarCoordAbs);
+
+        nodes->SetBound_Disp(iPoint, VarCoordAbs);
+
+        //if (harmonic_balance) 
+//	nodes->SetBound_Vel(iPoint, newGridVel);
+      }
+      
+      for (iDim = 0; iDim < 3; iDim++){
+       Center[iDim] += dU[iDim];
+       //Center[iDim] += 1.0;
+      }
+
+      cout << "Center OUT= (" ;
+    	for (iDim = 0; iDim < 3; iDim++){
+	     	cout << Center[iDim] << " " ;
+	}
+        cout << ")" << endl;
+
+
+///        config->SetMarkerMotion_Origin(Center, jMarker);
+
+        config->SetRefOriginMoment_X_HB(iter, Center[0]);
+        config->SetRefOriginMoment_Y_HB(iter, Center[1]);
+        config->SetRefOriginMoment_Z_HB(iter, Center[2]); 
+
+	cout << "center set" << endl;
+    }
+  }
+  /*--- For pitching we don't update the motion origin and moment reference origin. ---*/
+
+}
+
+void CMeshSolver::SetStructuralModes(CGeometry *geometry, CConfig *config) {
+
+  const su2double DEG2RAD = PI_NUMBER/180.0;
+  unsigned short iMarker, jMarker;
+  unsigned long iPoint, iVertex;
+  string Marker_Tag, Moving_Tag;
+  unsigned short iDim;
+  su2double phi_x, phi_y, phi_z, phi_as, phi_ss;
+  unsigned long nps = config->GetNumber_STR_Nodes();
+  unsigned short STRmodes = config->GetNumber_Modes();
+  unsigned short method = config->Get_RBF_method();
+  unsigned long dofs = config->Get_STR_Dofs(); // STR is a surface here
+  unsigned long kk;
+
+  static int mpi_size = SU2_MPI::GetSize();
+  static SU2_MPI::Status mpi_status;
+
+  string f1;
+  string filename = config->Get_STR_name(), line;
+  string fullfile_mesh = filename + ".vertices";
+  string fullfile_mode = filename + ".mode";
+  string extension;
+  stringstream ss;
+	      
+  ifstream modefile;
+  ifstream meshfile;
+
+  vector<su2double> xa(3,0.0), xs1(3,0.0), xs2(3,0.0);
+  su2double dummy1, dummy2, dummy3;
+  vector<su2double> PHI_X_str(nps,0.0);
+  vector<su2double> PHI_Y_str(nps,0.0);
+  vector<su2double> PHI_Z_str(nps,0.0);
+
+  vector<su2double> sol_vec_x(nps+dofs+1,0.0);
+  vector<su2double> sol_vec_y(nps+dofs+1,0.0);
+  vector<su2double> sol_vec_z(nps+dofs+1,0.0);
+
+  vector<su2double> X_str(nps,0.0);
+  vector<su2double> Y_str(nps,0.0);
+  vector<su2double> Z_str(nps,0.0);
+ 
+  vector<vector<su2double>> Css(1+dofs+nps,vector<su2double>(1+dofs+nps+1,0.0));
+
+  if (rank == MASTER_NODE) cout << "Setting Structural Modes on Aerodynamic Surface" << endl;
+  if (rank == MASTER_NODE) cout << "Mesh filename : " << fullfile_mesh << endl;
+     /*--- Store displacement of each node on the plunging surface ---*/
+  /*--- Loop over markers and find the particular marker(s) (surface) to plunge ---*/
+
+  for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
+    if (config->GetMarker_All_Moving(iMarker) != YES) continue;
+
+    Marker_Tag = config->GetMarker_All_TagBound(iMarker);
+
+    for (jMarker = 0; jMarker < config->GetnMarker_Moving(); jMarker++) {
+
+      Moving_Tag = config->GetMarker_Moving_TagBound(jMarker);
+
+      if (rank == MASTER_NODE) cout << "Marker : " <<  Marker_Tag << endl;
+
+      if ((Marker_Tag != Moving_Tag) || (config->GetKind_SurfaceMovement(jMarker) != DEFORMING)) {
+        continue;
+      }
+ 
+      // READ STR MESH NODES
+      //SU2_OMP_MASTER
+      if (rank == MASTER_NODE){
+
+	      meshfile.open(fullfile_mesh);
+
+      kk = 0;
+      cout << "Reading structural (Surface) nodes." << endl;
+      if (meshfile.is_open()) {	
+	      
+	getline(meshfile,line);
+
+	while ( kk < nps ){
+	
+	meshfile >> X_str[kk] >> Y_str[kk] >> Z_str[kk];
+
+	kk++;
+
+	}
+
+	meshfile.close();
+	if (rank == MASTER_NODE) cout << "Reached End-of-file for Structural Mesh." <<  endl;
+	
+      }	
+      else cout << "Unable to open Mesh file..." << endl; 
+
+#ifdef HAVE_MPI
+      for (int destination=1;destination<size;destination++){
+	      SU2_MPI::Send(&X_str[0], nps, MPI_DOUBLE, destination, 0, SU2_MPI::GetComm());
+	      SU2_MPI::Send(&Y_str[0], nps, MPI_DOUBLE, destination, 0, SU2_MPI::GetComm());
+	      SU2_MPI::Send(&Z_str[0], nps, MPI_DOUBLE, destination, 0, SU2_MPI::GetComm());
+      }
+#endif
+
+      // RBF MATRIX
+      for (unsigned long ii=0;ii<nps;ii++){
+
+	      Css[0][dofs+1+ii] = 1.0;
+	      Css[1][dofs+1+ii] = X_str[ii];
+	      Css[2][dofs+1+ii] = Y_str[ii];
+	      if (dofs==3) Css[3][dofs+1+ii] = Z_str[ii];
+
+	      Css[dofs+1+ii][0] = 1.0;
+	      Css[dofs+1+ii][1] = X_str[ii];
+	      Css[dofs+1+ii][2] = Y_str[ii];
+	      if (dofs==3) Css[dofs+1+ii][3] = Z_str[ii];
+      }
+
+      for (unsigned long ii=0;ii<nps;ii++){
+      for (unsigned long jj=0;jj<nps;jj++){
+	      
+	      xs1[0] = X_str[ii] ; xs1[1] = Y_str[ii] ; xs1[2] = Z_str[ii];
+	      xs2[0] = X_str[jj] ; xs2[1] = Y_str[jj] ; xs2[2] = Z_str[jj];
+
+	      phi_ss = RBF_Basis_Function(xs1,xs2,method);
+
+	      Css[dofs+1+ii][dofs+1+jj] = phi_ss;      
+
+      }
+      }
+
+      Css[0][nps+dofs+1] = 0.0;
+      Css[1][nps+dofs+1] = 0.0;
+      Css[2][nps+dofs+1] = 0.0;	      
+      if (dofs==3) Css[3][nps+dofs+1] = 0.0;
+      }
+      else {
+
+#if HAVE_MPI
+	      SU2_MPI::Recv(&X_str[0], nps, MPI_DOUBLE, 0, 0, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
+	      SU2_MPI::Recv(&Y_str[0], nps, MPI_DOUBLE, 0, 0, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
+	      SU2_MPI::Recv(&Z_str[0], nps, MPI_DOUBLE, 0, 0, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
+#endif
+
+      }
+	      
+      for (unsigned short mode=0;mode<STRmodes;mode++){
+              
+      // READ STR MODES
+      if (rank == MASTER_NODE) {  
+
+	      ss << mode+1;
+	      extension = to_string(mode+1);
+	      modefile.open(fullfile_mode+extension);
+
+      kk = 0;
+      cout << "Reading Structural Mode " << mode+1 << " from file : " << fullfile_mode+extension << endl; 
+      if (modefile.is_open()) {
+
+	getline(modefile,line);
+
+	while (kk < nps) {
+	
+	modefile >> dummy1 >> dummy2 >> dummy3;
+
+	PHI_X_str[kk] = dummy1;
+	PHI_Y_str[kk] = dummy2;
+	PHI_Z_str[kk] = dummy3;
+
+	kk++;
+	}
+	
+	modefile.close();
+	if (rank == MASTER_NODE) cout << "End-of-file for Mode " <<  mode+1 << endl;
+	
+      }	
+      else cout << "Unable to read Mode... " << endl; 
+
+      if (rank == MASTER_NODE) {
+        cout << " Storing Mode " << mode+1 <<  " displacement, for marker : ";
+        cout << Marker_Tag << "." << endl; 
+      }
+
+      /*--- RBF SYSTEM. ---*/
+      for (unsigned long ii=0;ii<nps;ii++) Css[dofs+1+ii][dofs+1+nps] = PHI_X_str[ii]; 
+      for (unsigned long ii=0;ii<nps+dofs+1;ii++) sol_vec_x[ii] = 0.0;
+ 
+      Gauss_Elimination(Css, sol_vec_x);
+ 
+      for (unsigned long ii=0;ii<nps;ii++) Css[dofs+1+ii][dofs+1+nps] = PHI_Y_str[ii]; 
+      for (unsigned long ii=0;ii<nps+dofs+1;ii++) sol_vec_y[ii] = 0.0;
+ 
+      Gauss_Elimination(Css, sol_vec_y);
+ 
+      for (unsigned long ii=0;ii<nps;ii++) Css[dofs+1+ii][dofs+1+nps] = PHI_Z_str[ii]; 
+      for (unsigned long ii=0;ii<nps+dofs+1;ii++) sol_vec_z[ii] = 0.0;
+ 
+      Gauss_Elimination(Css, sol_vec_z);
+
+      cout << "will send solutions " << endl;
+       
+#if HAVE_MPI
+      for (int destination=1;destination<size;destination++) {
+	      cout << "sending to proc " << destination << endl;
+	      SU2_MPI::Send(&sol_vec_x[0], nps+dofs+1, MPI_DOUBLE, destination, 1, SU2_MPI::GetComm());
+	      SU2_MPI::Send(&sol_vec_y[0], nps+dofs+1, MPI_DOUBLE, destination, 2, SU2_MPI::GetComm());
+	      SU2_MPI::Send(&sol_vec_z[0], nps+dofs+1, MPI_DOUBLE, destination, 3, SU2_MPI::GetComm());
+      }
+#endif
+
+      }
+      else {
+#if HAVE_MPI
+       SU2_MPI::Recv(&sol_vec_x[0], nps+dofs+1, MPI_DOUBLE, 0, 1, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
+       SU2_MPI::Recv(&sol_vec_y[0], nps+dofs+1, MPI_DOUBLE, 0, 2, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
+       SU2_MPI::Recv(&sol_vec_z[0], nps+dofs+1, MPI_DOUBLE, 0, 3, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
+#endif
+      }
+
+      for (iVertex = 0; iVertex < geometry->nVertex[iMarker]; iVertex++) {
+
+        /*--- Set node displacement for volume deformation ---*/
+
+	phi_x = 0.0;
+	phi_y = 0.0;
+	phi_z = 0.0;
+
+        iPoint = geometry->vertex[iMarker][iVertex]->GetNode();
+
+	for (iDim = 0; iDim < nDim; iDim++) {
+		
+		xa[iDim] = geometry->nodes->GetCoord(iPoint,iDim);
+
+		nodes->SetBound_Disp(iPoint, iDim, 0.0);
+	}
+
+	phi_x = sol_vec_x[0] + xa[0]*sol_vec_x[1] + xa[1]*sol_vec_x[2];  
+      	if (dofs==3) phi_x += xa[2]*sol_vec_x[3];
+	
+	phi_y = sol_vec_y[0] + xa[0]*sol_vec_y[1] + xa[1]*sol_vec_y[2];  
+      	if (dofs==3) phi_y += xa[2]*sol_vec_y[3];
+
+	phi_z = sol_vec_z[0] + xa[0]*sol_vec_z[1] + xa[1]*sol_vec_z[2];  
+      	if (dofs==3) phi_z += xa[2]*sol_vec_z[3];
+
+	for (unsigned long ii=0;ii<nps;ii++){
+
+		xs1[0] = X_str[ii] ; xs1[1] = Y_str[ii] ; xs1[2] = Z_str[ii];
+
+		phi_as = RBF_Basis_Function(xa,xs1,method);
+ 
+		phi_x += (phi_as * sol_vec_x[ii+dofs+1]);	
+		phi_y += (phi_as * sol_vec_y[ii+dofs+1]);	
+		phi_z += (phi_as * sol_vec_z[ii+dofs+1]);	
+
+	}
+	
+	nodes->SetBound_Mode_X(iPoint, mode, phi_x);
+	nodes->SetBound_Mode_Y(iPoint, mode, phi_y);
+	nodes->SetBound_Mode_Z(iPoint, mode, phi_z);
+
+      }
+
+      }
+
+
+    }
+  }
+ 
+}
+
+su2double CMeshSolver::RBF_Basis_Function(vector<su2double> x1, vector<su2double> x2, unsigned short method) {
+
+	su2double phi=0.0, dist;
+
+	su2double alpha = 0.01;
+
+	// multi-quadric biharmonic splines
+	if (method == 1) {
+
+		phi = (x1[0] - x2[0])*(x1[0] - x2[0]) +
+		      (x1[1] - x2[1])*(x1[1] - x2[1]) +
+		      (x1[2] - x2[2])*(x1[2] - x2[2]) + alpha*alpha;
+	
+	}
+
+	// thin plate spline
+	if (method == 2) {
+	
+		dist = (x1[0] - x2[0])*(x1[0] - x2[0]) +
+		       (x1[1] - x2[1])*(x1[1] - x2[1]) +
+		       (x1[2] - x2[2])*(x1[2] - x2[2]) + alpha*alpha;
+		
+		phi  = dist * log10(sqrt(dist)); 
+	
+	}
+
+	// euclid's hat
+	if (method == 3) {
+	
+		su2double r = 0.1;
+
+		dist = (x1[0] - x2[0])*(x1[0] - x2[0]) +
+		       (x1[1] - x2[1])*(x1[1] - x2[1]) +
+		       (x1[2] - x2[2])*(x1[2] - x2[2]) ;
+		
+		phi  = PI_NUMBER*( 1.0/12.0 * dist * sqrt(dist) - 
+				   r*r*sqrt(dist) + 4.0/3.0*r*r*r ); 
+	
+	}
+
+	// Hardy's multiquadric
+	if (method == 4) {
+	
+		su2double c = 0.0001;
+
+		dist = (x1[0] - x2[0])*(x1[0] - x2[0]) +
+		       (x1[1] - x2[1])*(x1[1] - x2[1]) +
+		       (x1[2] - x2[2])*(x1[2] - x2[2]) ;
+		
+		phi  = sqrt( c*c + dist ); 
+	
+	}
+
+	return phi;
+
+}
+
+void CMeshSolver::Gauss_Elimination(vector<vector<su2double>> A,vector<su2double>& sol) {
+    int n = A.size();
+
+    for (int i=0; i<n; i++) {
+        // Search for maximum in this column
+        su2double maxEl = abs(A[i][i]);
+        int maxRow = i;
+        for (int k=i+1; k<n; k++) {
+            if (abs(A[k][i]) > maxEl) {
+                maxEl = abs(A[k][i]);
+                maxRow = k;
+            }
+        }
+
+        // Swap maximum row with current row (column by column)
+        for (int k=i; k<n+1;k++) {
+            su2double tmp = A[maxRow][k];
+            A[maxRow][k] = A[i][k];
+            A[i][k] = tmp;
+        }
+
+        // Make all rows below this one 0 in current column
+        for (int k=i+1; k<n; k++) {
+            su2double c = -A[k][i]/A[i][i];
+            for (int j=i; j<n+1; j++) {
+                if (i==j) {
+                    A[k][j] = 0;
+                } else {
+                    A[k][j] += c * A[i][j];
+                }
+            }
+        }
+    }
+
+    // Solve equation Ax=b for an upper triangular matrix A
+    //vector<su2double> x(n);
+    for (int i=n-1; i>=0; i--) {
+        sol[i] = A[i][n]/A[i][i];
+        for (int k=i-1;k>=0; k--) {
+            A[k][n] -= A[k][i] * sol[i];
+        }
+    }
+    
+}
+
+void CMeshSolver::Calculate_Surface_Displacement(su2double* gen_disp, CGeometry *geometry, CConfig *config, unsigned long TimeIter) {
+
+  su2double VarCoordAbs[3] = {0.0}, dx[3] = {0.0};
+  const su2double DEG2RAD = PI_NUMBER/180.0;
+  unsigned short iMarker, jMarker;
+  unsigned long iPoint, iVertex;
+  string Marker_Tag, Moving_Tag;
+  unsigned short iDim;
+  unsigned short STRmodes = config->GetNumber_Modes();
+  unsigned short dofs = 2; // STR is a surface here
+
+  bool harmonic_balance = (config->GetTime_Marching() == TIME_MARCHING::HARMONIC_BALANCE);
+  unsigned long kk;
+
+  /*--- Store displacement of each node on the plunging surface ---*/
+  /*--- Loop over markers and find the particular marker(s) (surface) to plunge ---*/
+
+  for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
+    if (config->GetMarker_All_Moving(iMarker) != YES) continue;
+
+    Marker_Tag = config->GetMarker_All_TagBound(iMarker);
+
+   for (jMarker = 0; jMarker < config->GetnMarker_Moving(); jMarker++) {
+
+      Moving_Tag = config->GetMarker_Moving_TagBound(jMarker);
+
+      if ((Marker_Tag != Moving_Tag) || (config->GetKind_SurfaceMovement(jMarker) != DEFORMING)) {
+        continue;
+      }
+
+   /*--- Evaluate reference values for non-dimensionalization.
+     For dynamic meshes, use the motion Mach number as a reference value
+     for computing the force coefficients. Otherwise, use the freestream values,
+     which is the standard convention. ---*/
+ 
+      if (rank == MASTER_NODE) {
+      cout << " Calculating Surface Displacement, Z axis component, for marker: ";
+      cout << Marker_Tag << "." << endl; 
+      cout <<"with Gen. Displacement: ";
+      for (int ii=0;ii<STRmodes;ii++) {
+      
+	      cout << gen_disp[ii] << "| ";
+
+      }
+      cout << endl;
+      }
+
+      for (iVertex = 0; iVertex < geometry->nVertex[iMarker]; iVertex++) {
+
+        /*--- Set node displacement for volume deformation ---*/
+
+        iPoint = geometry->vertex[iMarker][iVertex]->GetNode();
+
+	 dx[0] = 0.0;
+	 dx[1] = 0.0;
+	 dx[2] = 0.0;
+	 for (unsigned short mode=0;mode<STRmodes;mode++){
+
+		 dx[0] += (nodes->GetBound_Mode_X(iPoint, mode)*gen_disp[mode]);
+                 dx[1] += (nodes->GetBound_Mode_Y(iPoint, mode)*gen_disp[mode]);
+		 dx[2] += (nodes->GetBound_Mode_Z(iPoint, mode)*gen_disp[mode]);
+     	
+	 }
+
+  	 for (iDim = 0; iDim < nDim; iDim++) {
+                 if (harmonic_balance) VarCoordAbs[iDim] = dx[iDim];
+                 else VarCoordAbs[iDim] = nodes->GetBound_Disp(iPoint, iDim) + dx[iDim];	
+      	 }
+
+      	 nodes->SetBound_Disp(iPoint, VarCoordAbs);
+ 
+      }
+
+    }
+  }
+ 
+}
+
+void CMeshSolver::Calculate_Generalized_Forces(su2double* &gen_forces, CGeometry *geometry, CSolver *flow_solution, CConfig *config, unsigned long TimeIter) {
+
+  su2double VarCoordAbs[3] = {0.0}, dx[3] = {0.0};
+  const su2double DEG2RAD = PI_NUMBER/180.0;
+  unsigned short iMarker, jMarker;
+  unsigned long iPoint, iVertex;
+  string Marker_Tag, Moving_Tag, Monitoring_Tag;
+  unsigned short iDim;
+  unsigned short STRmodes = config->GetNumber_Modes();
+  unsigned short dofs = 2; // STR is a surface here
+
+  su2double cl_tot, cd_tot, cl_proc, cd_proc;
+  bool write_check=0;
+  unsigned long kk;
+  if (TimeIter == 5) write_check =1;
+
+  ofstream Valid_file;
+
+  if (write_check) {
+    Valid_file.precision(15);
+    Valid_file.open("check_pressure_modes.csv", ios::out);
+  }
+
+  unsigned short Boundary, Monitoring, iMarker_Monitoring;
+  su2double Pressure = 0.0, factor, RefVel2 = 0.0, RefTemp, RefDensity = 0.0, RefPressure, Mach2Vel,
+            Mach_Motion, RefArea;
+  const su2double *Normal = nullptr, *Coord = nullptr;
+        
+  su2double Force[3] = {0.0};
+  su2double ForceTotal[3] = {0.0};
+ 
+    RefTemp     = config->GetTemperature_FreeStream();
+    RefDensity  = config->GetDensity_FreeStream();
+    RefPressure = config->GetPressure_FreeStream();
+    RefArea     = config->GetRefArea();
+
+    su2double Alpha = config->GetAoA() * PI_NUMBER / 180.0;
+
+    CVariable* flow_nodes = flow_solution->GetNodes(); 
+
+    Mach2Vel    = sqrt(1.4 * config->GetGas_Constant() * RefTemp);  
+    Mach_Motion = config->GetMach_Motion();
+      
+    RefVel2 = (Mach_Motion * Mach2Vel) * (Mach_Motion * Mach2Vel);
+   
+    factor = 1.0 / (0.5 * RefDensity * RefArea * RefVel2); 
+    //factor = 1.0 / (0.5 * RefDensity * RefVel2);
+
+  /*--- Store displacement of each node on the plunging surface ---*/
+  /*--- Loop over markers and find the particular marker(s) (surface) to plunge ---*/
+
+  for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
+    if (config->GetMarker_All_Moving(iMarker) != YES) continue;
+
+    Marker_Tag = config->GetMarker_All_TagBound(iMarker);
+
+   for (jMarker = 0; jMarker < config->GetnMarker_Moving(); jMarker++) {
+
+      Moving_Tag = config->GetMarker_Moving_TagBound(jMarker);
+
+      if ((Marker_Tag != Moving_Tag) || (config->GetKind_SurfaceMovement(jMarker) != DEFORMING)) {
+        continue;
+      }
+
+   /*--- Evaluate reference values for non-dimensionalization.
+     For dynamic meshes, use the motion Mach number as a reference value
+     for computing the force coefficients. Otherwise, use the freestream values,
+     which is the standard convention. ---*/
+
+      for (unsigned short mode=0;mode<STRmodes;mode++) gen_forces[mode]=0.0;
+
+      if (rank == MASTER_NODE) {
+        cout << " Calculating Gen. Forces, Z axis component, for marker: ";
+        cout << Marker_Tag << "." << endl; 
+      }
+
+      //for (iVertex = 0; iVertex < geometry->nVertex[iMarker]; iVertex++) {
+      for (iVertex = 0; iVertex < geometry->GetnVertex(jMarker); iVertex++) {
+
+        /*--- Set node displacement for volume deformation ---*/
+
+        iPoint = geometry->vertex[jMarker][iVertex]->GetNode();
+
+	Pressure = flow_nodes->GetPressure(iPoint);
+
+        if (geometry->nodes->GetDomain(iPoint)) 
+	{
+	Normal = geometry->vertex[jMarker][iVertex]->GetNormal();
+	Coord = geometry->nodes->GetCoord(iPoint);
+
+          for (iDim = 0; iDim < nDim; iDim++) {
+            Force[iDim] = -(Pressure - RefPressure) * Normal[iDim] * factor ;
+            //Force[iDim] = -(Pressure - RefPressure) * Normal[iDim] ;
+
+            ForceTotal[iDim] += Force[iDim];
+          }
+
+ 	  for (unsigned short mode=0;mode<STRmodes;mode++)
+		 gen_forces[mode] += (nodes->GetBound_Mode_Z(iPoint, mode)*
+				      (cos(Alpha)*Force[2]-sin(Alpha)*Force[0])*RefArea +
+				      nodes->GetBound_Mode_X(iPoint, mode)*
+				      (cos(Alpha)*Force[0]+sin(Alpha)*Force[2])*RefArea);
+	} 
+      }
+
+      cl_tot = (cos(Alpha)*ForceTotal[2]-sin(Alpha)*ForceTotal[0]);
+      cd_tot = (cos(Alpha)*ForceTotal[0]+sin(Alpha)*ForceTotal[2]);
+
+#ifdef HAVE_MPI
+
+      if (config->GetComm_Level() == COMM_FULL) {
+
+	      auto Allreduce = [](su2double x) {
+              su2double tmp = x;
+              x = 0.0;
+              SU2_MPI::Allreduce(&tmp, &x, 1, MPI_DOUBLE, MPI_SUM, SU2_MPI::GetComm());
+              return x;  
+              };
+
+	      cl_tot = Allreduce(cl_tot);
+	      cd_tot = Allreduce(cd_tot);
+
+	      for (unsigned short mode=0;mode<STRmodes;mode++)
+		      gen_forces[mode] = Allreduce(gen_forces[mode]);
+      }
+
+#endif
+
+      if (rank == MASTER_NODE) 
+	 cout <<  "in gen. forces : CL_tot= " << cl_tot << " | CD_tot= " << cd_tot << endl;
+
+    }
+  }
+ 
 }

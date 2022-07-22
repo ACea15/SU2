@@ -1014,6 +1014,9 @@ public:
                            CConfig *config,
                            unsigned long TimeIter) final;
 
+  void ReInitSolver(CGeometry *geometry, CConfig *config,
+                           unsigned short iMesh) override;
+
   /*!
    * \brief Set the solution using the Freestream values.
    * \param[in] config - Definition of the particular problem.

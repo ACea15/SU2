@@ -337,10 +337,336 @@ CEulerSolver::CEulerSolver(CGeometry *geometry, CConfig *config,
   if((nDim > MAXNDIM) || (nPrimVar > MAXNVAR) || (nSecondaryVar > MAXNVAR))
     SU2_MPI::Error("Oops! The CEulerSolver static array sizes are not large enough.",CURRENT_FUNCTION);
 }
-
+  
 CEulerSolver::~CEulerSolver(void) {
 
   for(auto& model : FluidModel) delete model;
+}
+
+void CEulerSolver::ReInitSolver(CGeometry *geometry, CConfig *config,
+                           unsigned short iMesh) {
+
+  /*--- Based on the navier_stokes boolean, determine if this constructor is
+   *    being called by itself, or by its derived class CNSSolver. ---*/
+  string description= "Euler";
+  unsigned short nSecVar= 2;
+   
+  su2double Temperature_FreeStream = 0.0, Mach2Vel_FreeStream = 0.0, ModVel_FreeStream = 0.0,
+  Energy_FreeStream = 0.0, ModVel_FreeStreamND = 0.0, Velocity_Reynolds = 0.0,
+  Density_FreeStream = 0.0, Pressure_FreeStream = 0.0, Tke_FreeStream = 0.0,
+  Temperature_Ref = 0.0, Time_Ref = 0.0, Omega_Ref = 0.0, Force_Ref = 0.0,
+  Gas_Constant_Ref = 0.0, Viscosity_Ref = 0.0, Conductivity_Ref = 0.0, Energy_Ref= 0.0,
+  Froude = 0.0, Pressure_FreeStreamND = 0.0, Density_FreeStreamND = 0.0,
+  Temperature_FreeStreamND = 0.0, Gas_ConstantND = 0.0,
+  Velocity_FreeStreamND[3] = {0.0, 0.0, 0.0}, Viscosity_FreeStreamND = 0.0,
+  Tke_FreeStreamND = 0.0, Energy_FreeStreamND = 0.0,
+  Total_UnstTimeND = 0.0, Delta_UnstTimeND = 0.0, TgammaR=0.0, Heat_Flux_Ref = 0.0;
+
+  /*--- Local variables ---*/
+
+  su2double Alpha         = config->GetAoA()*PI_NUMBER/180.0;
+  su2double Beta          = config->GetAoS()*PI_NUMBER/180.0;
+  su2double Mach          = config->GetMach();
+  su2double Reynolds      = config->GetReynolds();
+
+  const auto nZone = geometry->GetnZone();
+  const bool restart = (config->GetRestart() || config->GetRestart_Flow());
+  const bool rans = (config->GetKind_Turb_Model() != TURB_MODEL::NONE);
+  const auto direct_diff = config->GetDirectDiff();
+  const bool dual_time = (config->GetTime_Marching() == TIME_MARCHING::DT_STEPPING_1ST) ||
+                         (config->GetTime_Marching() == TIME_MARCHING::DT_STEPPING_2ND);
+  const bool time_stepping = (config->GetTime_Marching() == TIME_MARCHING::TIME_STEPPING);
+  const bool adjoint = config->GetContinuous_Adjoint() || config->GetDiscrete_Adjoint();
+
+  int Unst_RestartIter = 0;
+  unsigned long iPoint, counter_local = 0, counter_global = 0;
+  unsigned short iDim, iMarker, nLineLets, iVertex;
+  su2double StaticEnergy, Density, Velocity2, Pressure, Temperature;
+
+  /*--- A grid is defined as dynamic if there's rigid grid movement or grid deformation AND the problem is time domain ---*/
+  dynamic_grid = config->GetDynamic_Grid();
+
+  /*--- Store the multigrid level. ---*/
+  MGLevel = iMesh;
+ 
+  /*--- Set the gamma value ---*/
+
+  Gamma = config->GetGamma();
+  Gamma_Minus_One = Gamma - 1.0;
+
+  /*--- Define geometry constants in the solver structure
+   Compressible flow, primitive variables (T, vx, vy, vz, P, rho, h, c, lamMu, EddyMu, ThCond, Cp).
+   ---*/
+
+  nDim = geometry->GetnDim();
+
+  nVar = nDim+2;
+  nPrimVar = nDim+9; nPrimVarGrad = nDim+4;
+  nSecondaryVar = nSecVar; nSecondaryVarGrad = 2;
+
+  /*--- Initialize nVarGrad for deallocation ---*/
+
+  nVarGrad = nPrimVarGrad;
+
+  nMarker      = config->GetnMarker_All();
+  nPoint       = geometry->GetnPoint();
+  nPointDomain = geometry->GetnPointDomain();
+
+  /*--- Store the number of vertices on each marker for deallocation later ---*/
+
+    for (iMarker = 0; iMarker < nMarker; iMarker++){ 
+      nVertex[iMarker] = geometry->nVertex[iMarker];
+    }
+
+  /*--- Perform the non-dimensionalization for the flow equations using the
+   specified reference values. ---*/
+  bool aeroelastic        = config->GetAeroelastic_Simulation();
+  bool aeroelastic_hb     = config->GetAeroelasticity_HB();
+  bool aeroelastic_modal  = config->GetAeroelastic_Modal() && !config->GetImposed_Modal_Move();
+  bool free_stream_temp   = (config->GetKind_FreeStreamOption() == FREESTREAM_OPTION::TEMPERATURE_FS);
+
+  /*--- Set temperature via the flutter speed index ---*/
+//  su2double vf             = config->GetAeroelastic_Flutter_Speed_Index();
+//  su2double w_alpha        = config->GetAeroelastic_Frequency_Pitch();
+//  su2double b              = config->GetLength_Reynolds()/2.0; // airfoil semichord, Reynolds length is by defaul 1.0
+//  su2double mu             = config->GetAeroelastic_Airfoil_Mass_Ratio();
+//  // The temperature times gamma times the gas constant. Depending on the FluidModel temp is calculated below.
+//  TgammaR = ((vf*vf)*(b*b)*(w_alpha*w_alpha)*mu) / (Mach*Mach); 
+
+///*--- Compressible non dimensionalization ---*/
+
+///*--- Compute the Free Stream velocity, using the Mach number ---*/
+
+//Pressure_FreeStream = config->GetPressure_FreeStream();
+//Density_FreeStream  = config->GetDensity_FreeStream();
+//Temperature_FreeStream = config->GetTemperature_FreeStream();
+
+//su2double Density_FreeStream_Old  = config->GetDensity_FreeStream();
+//su2double Temperature_FreeStream_Old = config->GetTemperature_FreeStream();
+//su2double Velocity_FreeStream_Old = config->GetVelocity_FreeStream()[0];
+
+//cout << "OLD: " << Pressure_FreeStream << " " << Density_FreeStream << " " << Temperature_FreeStream  << " " << Velocity_FreeStream_Old << endl; 
+//
+//CFluidModel* auxFluidModel = nullptr;
+
+//switch (config->GetKind_FluidModel()) {
+
+//  case STANDARD_AIR:
+
+//    switch (config->GetSystemMeasurements()) {
+//      case SI: config->SetGas_Constant(287.058); break;
+//      case US: config->SetGas_Constant(1716.49); break;
+//    }
+
+//    auxFluidModel = new CIdealGas(1.4, config->GetGas_Constant());
+
+//    if (free_stream_temp && (aeroelastic || aeroelastic_hb || aeroelastic_modal)) {
+//      Temperature_FreeStream = TgammaR / (config->GetGas_Constant()*1.4);
+//      config->SetTemperature_FreeStream(Temperature_FreeStream);
+//      cout << "Temp= " << Temperature_FreeStream << endl;
+//    }
+//    break;
+
+//  case IDEAL_GAS:
+
+//    auxFluidModel = new CIdealGas(Gamma, config->GetGas_Constant());
+//    break;
+
+//  case VW_GAS:
+
+//    auxFluidModel = new CVanDerWaalsGas(Gamma, config->GetGas_Constant(),
+//               config->GetPressure_Critical(), config->GetTemperature_Critical());
+//    break;
+
+//  case PR_GAS:
+
+//    auxFluidModel = new CPengRobinson(Gamma, config->GetGas_Constant(), config->GetPressure_Critical(),
+//                                      config->GetTemperature_Critical(), config->GetAcentric_Factor());
+//    break;
+
+//  default:
+//    SU2_MPI::Error("Unknown fluid model.", CURRENT_FUNCTION);
+//    break;
+//}
+
+//if (free_stream_temp) {
+//  auxFluidModel->SetTDState_PT(Pressure_FreeStream, Temperature_FreeStream);
+//  Density_FreeStream = auxFluidModel->GetDensity();
+//  //Pressure_FreeStream = Density_FreeStream*Temperature_FreeStream*287.058;
+//  //config->SetPressure_FreeStream(Pressure_FreeStream);
+//  config->SetDensity_FreeStream(Density_FreeStream);
+//  //auxFluidModel->SetTDState_PT(Pressure_FreeStream, Temperature_FreeStream); 
+//}
+//else {
+//  auxFluidModel->SetTDState_Prho(Pressure_FreeStream, Density_FreeStream );
+//  Temperature_FreeStream = auxFluidModel->GetTemperature();
+//  config->SetTemperature_FreeStream(Temperature_FreeStream);
+//}
+
+//Mach2Vel_FreeStream = auxFluidModel->GetSoundSpeed();
+
+///*--- Compute the Free Stream velocity, using the Mach number ---*/
+
+//if (nDim == 2) {
+//  config->GetVelocity_FreeStream()[0] = cos(Alpha)*Mach*Mach2Vel_FreeStream;
+//  config->GetVelocity_FreeStream()[1] = sin(Alpha)*Mach*Mach2Vel_FreeStream;
+//}
+//if (nDim == 3) {
+//  config->GetVelocity_FreeStream()[0] = cos(Alpha)*cos(Beta)*Mach*Mach2Vel_FreeStream;
+//  config->GetVelocity_FreeStream()[1] = sin(Beta)*Mach*Mach2Vel_FreeStream;
+//  config->GetVelocity_FreeStream()[2] = sin(Alpha)*cos(Beta)*Mach*Mach2Vel_FreeStream;
+//}
+
+//cout << "NEW: " << Pressure_FreeStream << " " << Density_FreeStream << " " << Temperature_FreeStream << " " << config->GetVelocity_FreeStream()[0] << endl; 
+///*--- Compute the modulus of the free stream velocity ---*/
+
+//su2double Density_ratio = Density_FreeStream/Density_FreeStream_Old;
+//su2double Temperature_ratio = Temperature_FreeStream/Temperature_FreeStream_Old;
+//su2double Velocity_ratio = config->GetVelocity_FreeStream()[0]/Velocity_FreeStream_Old;
+
+//ModVel_FreeStream = 0.0;
+//for (iDim = 0; iDim < nDim; iDim++)
+//  ModVel_FreeStream += config->GetVelocity_FreeStream()[iDim]*config->GetVelocity_FreeStream()[iDim];
+//ModVel_FreeStream = sqrt(ModVel_FreeStream); config->SetModVel_FreeStream(ModVel_FreeStream);
+
+//Energy_FreeStream = auxFluidModel->GetStaticEnergy() + 0.5*ModVel_FreeStream*ModVel_FreeStream;
+
+//Pressure_FreeStreamND = Pressure_FreeStream;  config->SetPressure_FreeStreamND(Pressure_FreeStreamND);
+//Density_FreeStreamND  = Density_FreeStream;    config->SetDensity_FreeStreamND(Density_FreeStreamND);
+
+//for (iDim = 0; iDim < nDim; iDim++) {
+//  Velocity_FreeStreamND[iDim] = config->GetVelocity_FreeStream()[iDim]; config->SetVelocity_FreeStreamND(Velocity_FreeStreamND[iDim], iDim);
+//}
+
+//Temperature_FreeStreamND = Temperature_FreeStream; config->SetTemperature_FreeStreamND(Temperature_FreeStreamND);
+
+//ModVel_FreeStreamND = 0.0;
+//for (iDim = 0; iDim < nDim; iDim++) ModVel_FreeStreamND += Velocity_FreeStreamND[iDim]*Velocity_FreeStreamND[iDim];
+//ModVel_FreeStreamND    = sqrt(ModVel_FreeStreamND); config->SetModVel_FreeStreamND(ModVel_FreeStreamND);
+
+
+//delete auxFluidModel;
+
+
+  SetNondimensionalization(config, iMesh);
+    /*--- Jacobians and vector structures for implicit computations ---*/
+
+    /*--- Read farfield conditions from config ---*/
+
+  Temperature_Inf = config->GetTemperature_FreeStreamND();
+  Velocity_Inf = config->GetVelocity_FreeStreamND();
+  Pressure_Inf = config->GetPressure_FreeStreamND();
+  Density_Inf = config->GetDensity_FreeStreamND();
+  Energy_Inf = config->GetEnergy_FreeStreamND();
+  Mach_Inf = config->GetMach();
+
+  switch(direct_diff) {
+    case NO_DERIVATIVE:
+      /*--- Default ---*/
+      break;
+    case D_DENSITY:
+      SU2_TYPE::SetDerivative(Density_Inf, 1.0);
+      break;
+    case D_PRESSURE:
+      SU2_TYPE::SetDerivative(Pressure_Inf, 1.0);
+      break;
+    case D_TEMPERATURE:
+      SU2_TYPE::SetDerivative(Temperature_Inf, 1.0);
+      break;
+    case D_MACH: case D_AOA:
+    case D_SIDESLIP: case D_REYNOLDS:
+    case D_TURB2LAM: case D_DESIGN:
+      /*--- Already done in postprocessing of config ---*/
+      break;
+    default:
+      break;
+  }
+
+ /*--- Initialize the solution to the far-field state everywhere. ---*/
+ 
+
+  /*--- Check that the initial solution is physical, report any non-physical nodes ---*/
+
+  counter_local = 0;
+
+//for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
+
+//        if (rank == MASTER_NODE) cout << "Marker= " << config->GetMarker_All_TagBound(iMarker) << endl;
+
+//if (config->GetMarker_All_KindBC(iMarker) == FAR_FIELD) {
+//        cout << "Inside" << endl;
+///           cout << "Point= " << iPoint << endl;
+//  //Density = nodes->GetDensity(iPoint);
+//  Density = Density_Inf;
+
+//  Velocity2 = 0.0;
+//  for (iDim = 0; iDim < nDim; iDim++)
+//    Velocity2 += pow(Velocity_Inf[iDim]/Density,2);
+
+//  StaticEnergy= Energy_Inf - 0.5*Velocity2;
+
+////  cout << "Static energy OK" << endl;
+
+//  GetFluidModel()->SetTDState_rhoe(Density_Inf, StaticEnergy);
+//  Pressure= GetFluidModel()->GetPressure();
+//  Temperature= GetFluidModel()->GetTemperature();
+
+//if (rank==MASTER_NODE) cout << "Temp= " << Temperature << " / Dens= " << Density << " / Velo= " << Velocity_Inf[0] << " / Press= " <<  Pressure << endl ;
+
+
+////  cout << "Fluid model OK" << endl;
+//  /*--- Use the values at the infinity ---*/
+//for (iVertex = 0; iVertex < nVertex[iMarker]; iVertex++) {
+
+//	  iPoint = geometry->vertex[iMarker][iVertex]->GetNode();
+
+//  su2double Solution[MAXNVAR] = {0.0};
+//  //if ((Pressure < 0.0) || (Density < 0.0) || (Temperature < 0.0)) {
+//    Solution[0] = Density_Inf;
+//    for (iDim = 0; iDim < nDim; iDim++)
+//      Solution[iDim+1] = Velocity_Inf[iDim]*Density_Inf;
+//    Solution[nDim+1] = Energy_Inf*Density_Inf;
+//    //nodes->SetSolution(iPoint,Solution);
+//    //nodes->SetSolution_Old(iPoint,Solution);
+//    counter_local++;
+//    
+//    DonorPrimVar[iMarker][iVertex][0] = Density_Inf;
+//    for (iDim = 0; iDim < nDim; iDim++)
+//    	DonorPrimVar[iMarker][iVertex][iDim+1] = Velocity_Inf[iDim];
+//    DonorPrimVar[iMarker][iVertex][nDim+1] = Temperature_Inf;
+//   
+//}
+
+//for (iPoint = 0; iPoint < nPoint; iPoint++) {
+///           cout << "Point= " << iPoint << endl;
+//  //Density = nodes->GetDensity(iPoint);
+//  Density = Density_Inf;
+
+//  Velocity2 = 0.0;
+//  for (iDim = 0; iDim < nDim; iDim++)
+//    Velocity2 += pow(Velocity_Inf[iDim]/Density,2);
+
+//  StaticEnergy= Energy_Inf - 0.5*Velocity2;
+
+////  cout << "Static energy OK" << endl;
+
+//  GetFluidModel()->SetTDState_rhoe(Density_Inf, StaticEnergy);
+//  Pressure= GetFluidModel()->GetPressure();
+//  Temperature= GetFluidModel()->GetTemperature();
+
+//   su2double Solution[MAXNVAR] = {0.0};
+//  //if ((Pressure < 0.0) || (Density < 0.0) || (Temperature < 0.0)) {
+//    Solution[0] = nodes->GetSolution(iPoint,0)*Density_ratio;
+//    for (iDim = 0; iDim < nDim; iDim++)
+//      Solution[iDim+1] = nodes->GetSolution(iPoint,iDim+1)*Velocity_ratio*Density_ratio;
+//    Solution[nDim+1] = nodes->GetSolution(iPoint,iDim+1)*Velocity_ratio*Velocity_ratio*Density_ratio;
+
+//      nodes->SetSolution(iPoint,Solution);
+////    nodes->SetSolution_Old(iPoint,Solution);
+//    counter_local++;
+//        
+//}
+
 }
 
 void CEulerSolver::InstantiateEdgeNumerics(const CSolver* const* solver_container, const CConfig* config) {
@@ -793,9 +1119,19 @@ void CEulerSolver::SetNondimensionalization(CConfig *config, unsigned short iMes
   bool free_stream_temp   = (config->GetKind_FreeStreamOption() == FREESTREAM_OPTION::TEMPERATURE_FS);
   bool reynolds_init      = (config->GetKind_InitOption() == REYNOLDS);
   bool aeroelastic        = config->GetAeroelastic_Simulation();
+  bool aeroelastic_hb     = config->GetAeroelasticity_HB();
+  bool aeroelastic_modal  = config->GetAeroelastic_Modal();
 
   /*--- Set temperature via the flutter speed index ---*/
-  if (aeroelastic) {
+  if (aeroelastic_modal) {
+      su2double vf             = config->GetAeroelastic_Flutter_Speed_Index();
+      su2double w_a            = config->GetAeroelastic_Frequency_Pitch();
+      su2double b              = config->GetRefWing_Length()/2.0; // airfoil semichord, Reynolds length is by defaul 1.0
+      su2double mu             = config->GetAeroelastic_Airfoil_Mass_Ratio();
+      //// The temperature times gamma times the gas constant. Depending on the FluidModel temp is calculated below.
+      TgammaR = ((vf*vf)*(b*b)*(w_a*w_a)*mu) / (Mach*Mach);
+  }
+  else if (aeroelastic || aeroelastic_hb) {
     su2double vf             = config->GetAeroelastic_Flutter_Speed_Index();
     su2double w_alpha        = config->GetAeroelastic_Frequency_Pitch();
     su2double b              = config->GetLength_Reynolds()/2.0; // airfoil semichord, Reynolds length is by defaul 1.0
@@ -825,10 +1161,15 @@ void CEulerSolver::SetNondimensionalization(CConfig *config, unsigned short iMes
 
       auxFluidModel = new CIdealGas(1.4, config->GetGas_Constant());
 
-      if (free_stream_temp && aeroelastic) {
+     if (free_stream_temp && aeroelastic_modal) {
+        Temperature_FreeStream = TgammaR / (config->GetGas_Constant()*1.4);
+        config->SetTemperature_FreeStream(Temperature_FreeStream);
+      }  
+      else if (free_stream_temp && (aeroelastic || aeroelastic_hb)) {
         Temperature_FreeStream = TgammaR / (config->GetGas_Constant()*1.4);
         config->SetTemperature_FreeStream(Temperature_FreeStream);
       }
+  
       break;
 
     case IDEAL_GAS:
@@ -853,10 +1194,21 @@ void CEulerSolver::SetNondimensionalization(CConfig *config, unsigned short iMes
       break;
   }
 
-  if (free_stream_temp) {
+  if (free_stream_temp && aeroelastic_modal) {
+    //auxFluidModel->SetTDState_PT(Pressure_FreeStream, Temperature_FreeStream);
+    //Density_FreeStream = auxFluidModel->GetDensity();
+    Pressure_FreeStream = Density_FreeStream*Temperature_FreeStream*config->GetGas_Constant();
+    config->SetPressure_FreeStream(Pressure_FreeStream);
+    config->SetDensity_FreeStream(Density_FreeStream);
+    auxFluidModel->SetTDState_PT(Pressure_FreeStream, Temperature_FreeStream); 
+  }
+  else if (free_stream_temp) {
     auxFluidModel->SetTDState_PT(Pressure_FreeStream, Temperature_FreeStream);
     Density_FreeStream = auxFluidModel->GetDensity();
+    //Pressure_FreeStream = Density_FreeStream*Temperature_FreeStream*287.058;
+    //config->SetPressure_FreeStream(Pressure_FreeStream);
     config->SetDensity_FreeStream(Density_FreeStream);
+    //auxFluidModel->SetTDState_PT(Pressure_FreeStream, Temperature_FreeStream); 
   }
   else {
     auxFluidModel->SetTDState_Prho(Pressure_FreeStream, Density_FreeStream );
@@ -2154,7 +2506,8 @@ void CEulerSolver::Source_Residual(CGeometry *geometry, CSolver **solver_contain
 
       /*--- Get stored time spectral source term and add to residual ---*/
       for (iVar = 0; iVar < nVar; iVar++) {
-        LinSysRes(iPoint,iVar) += Volume * nodes->GetHarmonicBalance_Source(iPoint,iVar);
+        LinSysRes(iPoint,iVar) += nodes->GetHarmonicBalance_Source(iPoint,iVar);
+        //LinSysRes(iPoint,iVar) += Volume * nodes->GetHarmonicBalance_Source(iPoint,iVar);
       }
     }
     END_SU2_OMP_FOR
