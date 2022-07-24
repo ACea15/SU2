@@ -227,6 +227,11 @@ CDriver::CDriver(char* confFile, unsigned short val_nZone, SU2_Comm MPICommunica
       DynamicMesh_Preprocessing(config_container[iZone], geometry_container[iZone][iInst], solver_container[iZone][iInst],
                                 iteration_container[iZone][iInst], grid_movement[iZone][iInst], surface_movement[iZone]);
 
+      /*--- Dynamic mesh processing for HB deform.  ---*/
+      
+      DynamicMesh_Preprocessing(config_container[iZone], geometry_container[iZone][iInst], solver_container[iZone][iInst][MESH_0],
+                                iteration_container[iZone][iInst], numerics_container[iZone][iInst][MESH_0]);
+ 
       /*--- Static mesh processing.  ---*/
 
       StaticMesh_Preprocessing(config_container[iZone], geometry_container[iZone][iInst]);
@@ -708,6 +713,76 @@ void CDriver::Geometrical_Preprocessing(CConfig* config, CGeometry **&geometry, 
 
 }
 
+void CDriver::Geometrical_Restart(CConfig* config, CGeometry **&geometry){
+ 
+    if (rank == MASTER_NODE)
+      cout << endl <<"------------------- Geometry Restart ( Zone " << config->GetiZone() <<" ) -------------------" << endl;
+
+//      delete [] geometry[MESH_0];
+      delete [] geometry;
+      geometry = nullptr; 
+
+      Geometrical_Preprocessing_FVM(config, geometry);
+    
+  /*--- Computation of positive surface area in the z-plane which is used for
+     the calculation of force coefficient (non-dimensionalization). ---*/
+
+  geometry[MESH_0]->SetPositive_ZArea(config);
+
+  /*--- Set the near-field, interface and actuator disk boundary conditions, if necessary. ---*/
+
+  // for (iMesh = 0; iMesh <= config->GetnMGLevels(); iMesh++) {
+  //   geometry[iMesh]->MatchNearField(config);
+  //   geometry[iMesh]->MatchActuator_Disk(config);
+  // }
+
+  /*--- If we have any periodic markers in this calculation, we must
+       match the periodic points found on both sides of the periodic BC.
+       Note that the current implementation requires a 1-to-1 matching of
+       periodic points on the pair of periodic faces after the translation
+       or rotation is taken into account. ---*/
+
+  if ((config->GetnMarker_Periodic() != 0) && !fem_solver) {
+    for (iMesh = 0; iMesh <= config->GetnMGLevels(); iMesh++) {
+
+      /*--- Note that we loop over pairs of periodic markers individually
+           so that repeated nodes on adjacent periodic faces are properly
+           accounted for in multiple places. ---*/
+
+      for (unsigned short iPeriodic = 1; iPeriodic <= config->GetnMarker_Periodic()/2; iPeriodic++) {
+        geometry[iMesh]->MatchPeriodic(config, iPeriodic);
+      }
+
+      /*--- Initialize the communication framework for the periodic BCs. ---*/
+      geometry[iMesh]->PreprocessPeriodicComms(geometry[iMesh], config);
+
+    }
+  }
+
+  /*--- If activated by the compile directive, perform a partition analysis. ---*/
+#if PARTITION
+ 
+    Partition_Analysis(geometry[MESH_0], config);
+ 
+#endif
+
+  /*--- Check if Euler & Symmetry markers are straight/plane. This information
+        is used in the Euler & Symmetry boundary routines. ---*/
+  if((config_container[iZone]->GetnMarker_Euler() != 0 ||
+     config_container[iZone]->GetnMarker_SymWall() != 0) &&
+     !fem_solver) {
+
+    if (rank == MASTER_NODE)
+      cout << "Checking if Euler & Symmetry markers are straight/plane:" << endl;
+
+    for (iMesh = 0; iMesh <= config_container[iZone]->GetnMGLevels(); iMesh++)
+      geometry_container[iZone][iInst][iMesh]->ComputeSurf_Straightness(config_container[iZone], (iMesh==MESH_0) );
+
+  }
+
+}
+
+
 void CDriver::Geometrical_Preprocessing_FVM(CConfig *config, CGeometry **&geometry) {
 
   unsigned short iZone = config->GetiZone(), iMGlevel;
@@ -883,7 +958,8 @@ void CDriver::Geometrical_Preprocessing_FVM(CConfig *config, CGeometry **&geomet
   /*--- For unsteady simulations, initialize the grid volumes
    and coordinates for previous solutions. Loop over all zones/grids ---*/
 
-  if ((config->GetTime_Marching() != TIME_MARCHING::STEADY) && config->GetDynamic_Grid()) {
+  if ((config->GetTime_Marching() != TIME_MARCHING::STEADY) && config->GetDynamic_Grid() || (config_container[ZONE_0]->GetAeroelasticity_HB())) {
+  //  if (config->GetTime_Marching() && config->GetGrid_Movement() ) {
     for (iMGlevel = 0; iMGlevel <= config->GetnMGLevels(); iMGlevel++) {
 
       /*--- Update cell volume ---*/
@@ -2404,6 +2480,23 @@ void CDriver::DynamicMesh_Preprocessing(CConfig *config, CGeometry **geometry, C
 
 }
 
+void CDriver::DynamicMesh_Preprocessing(CConfig *config, CGeometry **geometry, CSolver **solver, CIteration* iteration, CNumerics ***numerics) const{
+
+  /*--- Instantiate the geometry movement classes for the solution of unsteady
+   flows on dynamic meshes, including rigid mesh transformations, dynamically
+   deforming meshes, and preprocessing of harmonic balance. ---*/
+
+  if (!fem_solver && (config->GetGrid_Movement() || (config->GetDirectDiff() == D_DESIGN))) {
+    if (config->GetTime_Marching() == TIME_MARCHING::HARMONIC_BALANCE){
+      if (rank == MASTER_NODE) cout << endl <<  "Instance "<< iInst + 1 <<":" << endl;
+      /*--- Works if DEFORM_MESH = YES ---*/
+      iteration->SetMesh_Deformation_HB(geometry, solver, numerics, config, iInst, true);
+
+    }
+  }
+
+}
+
 void CDriver::Interface_Preprocessing(CConfig **config, CSolver***** solver, CGeometry**** geometry,
                                       unsigned short** interface_types, CInterface ***interface,
                                       vector<vector<unique_ptr<CInterpolator> > >& interpolation) {
@@ -2535,6 +2628,7 @@ void CDriver::StaticMesh_Preprocessing(const CConfig *config, CGeometry** geomet
   unsigned short iMGlevel, iMGfine;
   unsigned short Kind_Grid_Movement;
 
+  bool harmonic_balance = (config->GetTime_Marching() == TIME_MARCHING::HARMONIC_BALANCE);
   unsigned short iZone = config->GetiZone();
 
   Kind_Grid_Movement = config->GetKind_GridMovement();
@@ -2583,7 +2677,7 @@ void CDriver::StaticMesh_Preprocessing(const CConfig *config, CGeometry** geomet
         break;
     }
 
-    if (config->GetnMarker_Moving() > 0) {
+    if (config->GetnMarker_Moving() > 0 && !harmonic_balance) {
 
       /*--- Fixed wall velocities: set the grid velocities only one time
        before the first iteration flow solver. ---*/
@@ -2599,7 +2693,7 @@ void CDriver::StaticMesh_Preprocessing(const CConfig *config, CGeometry** geomet
         geometry[iMGlevel]->SetRestricted_GridVelocity(geometry[iMGfine]);
       }
     }
-  } else {
+  } else if (!harmonic_balance) {
 
     /*--- Carry out a dynamic cast to CMeshFEM_DG, such that it is not needed to
          define all virtual functions in the base class CGeometry. ---*/
@@ -2907,7 +3001,10 @@ void CDriver::Print_DirectResidual(RECORDING kind_recording) {
 }
 
 CFluidDriver::CFluidDriver(char* confFile, unsigned short val_nZone, SU2_Comm MPICommunicator) : CDriver(confFile, val_nZone, MPICommunicator, false) {
-  Max_Iter = config_container[ZONE_0]->GetnInner_Iter();
+  bool aeroelastic_hb_flag = config_container[ZONE_0]->GetAeroelasticity_HB();
+	
+  if (aeroelastic_hb_flag) Max_Iter = config_container[ZONE_0]->GetnAero_Iter();
+  else	Max_Iter = config_container[ZONE_0]->GetnInner_Iter();
 }
 
 CFluidDriver::~CFluidDriver(void) { }
@@ -2929,16 +3026,32 @@ void CFluidDriver::StartSolver(){
 
     /*--- Perform some external iteration preprocessing. ---*/
 
-    Preprocess(Iter);
+  if (rank == MASTER_NODE && config_container[ZONE_0]->GetAeroelasticity_HB())
+     cout << endl <<"- Aeroelastic Iteration: " << Iter << " / " << Max_Iter << endl;
 
-    /*--- Perform a dynamic mesh update if required. ---*/
+   /*--- Perform a dynamic mesh update if required. ---*/
     /*--- For the Disc.Adj. of a case with (rigidly) moving grid, the appropriate
           mesh cordinates are read from the restart files. ---*/
+////for (int kkk=0;kkk<1;kkk++){
+
+    //if (config_container[ZONE_0]->GetAeroelasticity_HB() && Iter > 0 ) UpdateFlutterConditions(Iter,2);
+
+
     if (!fem_solver &&
         !(config_container[ZONE_0]->GetGrid_Movement() && config_container[ZONE_0]->GetDiscrete_Adjoint())) {
       DynamicMeshUpdate(Iter);
     }
 
+////if (config_container[ZONE_0]->GetAeroelasticity_HB() && Iter > 0 && (Iter%5==0)) UpdateFlutterConditions(Iter,1);
+
+////  if (config_container[ZONE_0]->GetAeroelasticity_HB() && Iter > 0 && Iter%2==0 ) UpdateFlutterConditions(Iter,2);
+
+    /// Update Flutter with (1) updates the flutter velocity index
+    if (config_container[ZONE_0]->GetAeroelasticity_HB() && Iter > 0 ) UpdateFlutterConditions(Iter,1);
+
+
+    Preprocess(Iter);
+ 
     /*--- Run a single iteration of the problem (fluid, elasticity, heat, ...). ---*/
 
     Run();
@@ -2951,6 +3064,11 @@ void CFluidDriver::StartSolver(){
     if (config_container[ZONE_0]->GetJacobian_Spatial_Discretization_Only()) break;
 
     /*--- Monitor the computations after each iteration. ---*/
+
+    /// Update Flutter with (2) updates the flutter frequency
+    if (config_container[ZONE_0]->GetAeroelasticity_HB() && Iter > 0 ) UpdateFlutterConditions(Iter,2);
+
+    //if (config_container[ZONE_0]->GetAeroelasticity_HB() && Iter > 0 ) UpdateFlutterConditions(Iter,3);
 
     Monitor(Iter);
 
@@ -2994,6 +3112,99 @@ void CFluidDriver::Preprocess(unsigned long Iter) {
       }
     }
   }
+}
+void CFluidDriver::UpdateFlutterConditions(unsigned long Iter, int updt) {
+
+    int  nInstHB = nInst[ZONE_0];
+
+
+    if (config_container[ZONE_0]->GetAeroelastic_Modal()) {
+
+    if ( Iter % config_container[ZONE_0]->GetnFreq_Iter() == 0 ) {
+
+    unsigned short modes = config_container[ZONE_0]->GetNumber_Modes();
+
+    su2double **Gen_Forces = new su2double*[nInstHB];
+    for (iInst = 0; iInst < nInstHB; iInst++){
+
+      Gen_Forces[iInst] = new su2double[modes];	    
+  
+    }
+
+    for (iInst = 0; iInst < nInstHB; iInst++)
+         solver_container[ZONE_0][iInst][MESH_0][MESH_SOL]->Calculate_Generalized_Forces(Gen_Forces[iInst], geometry_container[ZONE_0][iInst][MESH_0], solver_container[ZONE_0][iInst][MESH_0][FLOW_SOL], config_container[ZONE_0], iInst);
+
+    if (updt == 1) {
+
+        if (config_container[ZONE_0]->HB_Flutter()) 
+             solver_container[ZONE_0][INST_0][MESH_0][FLOW_SOL]->Velocity_Update_3D(config_container[ZONE_0], Gen_Forces, nInstHB, StopCalc);
+    }
+    else if (updt == 2) 
+        solver_container[ZONE_0][INST_0][MESH_0][FLOW_SOL]->Frequency_Update_3D(config_container[ZONE_0], Gen_Forces, nInstHB, StopCalc);
+    else if (updt == 3) 
+        solver_container[ZONE_0][INST_0][MESH_0][FLOW_SOL]->Frequency_Velocity_Update_3D(config_container[ZONE_0], Gen_Forces, nInstHB, StopCalc);
+ 
+    if (rank == 2) cout << "vf= "<< config_container[ZONE_0]->GetAeroelastic_Flutter_Speed_Index() << endl;
+    if (rank == 3) cout << "w_hb= "<< config_container[ZONE_0]->GetOmega_HB()[1] << endl;
+
+         for (iInst = 0; iInst < nInstHB; iInst++){
+ 
+             delete [] Gen_Forces[iInst];	     
+         }
+         delete [] Gen_Forces;
+
+    }
+    }
+    else {
+    if ( Iter % config_container[ZONE_0]->GetnFreq_Iter() == 0 ) {
+
+    su2double *lift = new su2double[nInstHB];
+    su2double *drag = new su2double[nInstHB];
+    su2double *moment = new su2double[nInstHB];
+
+    for (iInst = 0; iInst < nInstHB; iInst++){
+  
+    lift[iInst]   = solver_container[ZONE_0][iInst][MESH_0][FLOW_SOL]->GetTotal_CL();
+    drag[iInst]   = solver_container[ZONE_0][iInst][MESH_0][FLOW_SOL]->GetTotal_CD();
+    moment[iInst] = solver_container[ZONE_0][iInst][MESH_0][FLOW_SOL]->GetTotal_CMz(); 
+  
+    }
+
+    if (updt == 1) {
+
+        if (config_container[ZONE_0]->HB_Flutter()) {
+
+        //   solver_container[ZONE_0][INST_0][MESH_0][FLOW_SOL]->Frequency_Velocity_Update_2D(config_container[ZONE_0], lift, drag, moment, nInstHB, StopCalc);
+           solver_container[ZONE_0][INST_0][MESH_0][FLOW_SOL]->Velocity_Update_2D(config_container[ZONE_0], lift, drag, moment, nInstHB, StopCalc);
+        
+        }
+
+           //solver_container[ZONE_0][INST_0][MESH_0][FLOW_SOL]->Velocity_Update_2D(config_container[ZONE_0], lift, drag, moment, nInstHB, StopCalc);
+             //solver_container[ZONE_0][INST_0][MESH_0][FLOW_SOL]->Frequency_Update_2D(config_container[ZONE_0], lift, drag, moment, nInstHB, StopCalc);
+
+    }
+    else if (updt == 2) {
+
+          
+           solver_container[ZONE_0][INST_0][MESH_0][FLOW_SOL]->Frequency_Update_2D(config_container[ZONE_0], lift, drag, moment, nInstHB, StopCalc);
+           
+           //solver_container[ZONE_0][INST_0][MESH_0][FLOW_SOL]->Frequency_Velocity_Update_2D(config_container[ZONE_0], lift, drag, moment, nInstHB, StopCalc);
+
+    }
+
+    if (config_container[ZONE_0]->HB_LCO())
+       //solver_container[ZONE_0][INST_0][MESH_0][FLOW_SOL]->Frequency_Update_2D(config_container[ZONE_0], lift, drag, moment, nInstHB, StopCalc);
+       solver_container[ZONE_0][INST_0][MESH_0][FLOW_SOL]->Velocity_Update_2D(config_container[ZONE_0], lift, drag, moment, nInstHB, StopCalc);
+    else if (config_container[ZONE_0]->HB_Flutter())
+       solver_container[ZONE_0][INST_0][MESH_0][FLOW_SOL]->Frequency_Velocity_Update_2D4(config_container[ZONE_0], lift, drag, moment, nInstHB, StopCalc);
+
+    delete [] lift;
+    delete [] drag;
+    delete [] moment;
+
+    }
+    }
+   
 }
 
 void CFluidDriver::Run() {
@@ -3088,17 +3299,112 @@ void CFluidDriver::Update() {
 
 void CFluidDriver::DynamicMeshUpdate(unsigned long TimeIter) {
 
-  bool harmonic_balance;
+  bool harmonic_balance(config_container[ZONE_0]->GetTime_Marching() == TIME_MARCHING::HARMONIC_BALANCE);
+  bool aero_hb_flag = config_container[ZONE_0]->GetAeroelasticity_HB(); 
+  int  nInstHB = nInst[ZONE_0];
 
   for (iZone = 0; iZone < nZone; iZone++) {
-   harmonic_balance = (config_container[iZone]->GetTime_Marching() == TIME_MARCHING::HARMONIC_BALANCE);
     /*--- Dynamic mesh update ---*/
+
     if ((config_container[iZone]->GetGrid_Movement()) && (!harmonic_balance)) {
       iteration_container[iZone][INST_0]->SetGrid_Movement(geometry_container[iZone][INST_0], surface_movement[iZone], grid_movement[iZone][INST_0], solver_container[iZone][INST_0], config_container[iZone], 0, TimeIter );
     }
+
+
+    if (aero_hb_flag && TimeIter > 0) {
+           
+    if (config_container[iZone]->GetAeroelastic_Modal()) {
+
+    unsigned short modes = config_container[iZone]->GetNumber_Modes();
+
+    su2double **Gen_Forces = new su2double*[nInstHB];
+    su2double **Gen_Displacements = new su2double*[nInstHB];
+    for (iInst = 0; iInst < nInstHB; iInst++){
+
+      Gen_Forces[iInst] = new su2double[modes];	    
+      Gen_Displacements[iInst] = new su2double[modes];	    
+  
+    }
+
+    for (iInst = 0; iInst < nInstHB; iInst++)
+         solver_container[iZone][iInst][MESH_0][MESH_SOL]->Calculate_Generalized_Forces(Gen_Forces[iInst], geometry_container[iZone][iInst][MESH_0], solver_container[iZone][iInst][MESH_0][FLOW_SOL], config_container[iZone], iInst);
+      
+    if (rank == MASTER_NODE){ 
+	      solver_container[iZone][INST_0][MESH_0][FLOW_SOL]->AeroelasticWing_HB(Gen_Displacements, Gen_Forces, geometry_container[iZone][INST_0][MESH_0], config_container[iZone], nInstHB);
+
+	      for (int destination=1;destination<SU2_MPI::GetSize();destination++) {
+	      for (iInst = 0; iInst < nInstHB; iInst++) 
+		      SU2_MPI::Send(Gen_Displacements[iInst], modes, MPI_DOUBLE, destination, iInst+destination, SU2_MPI::GetComm());
+	      }
+    }  
+    else {
+	    for (iInst = 0; iInst < nInstHB; iInst++) 
+		    SU2_MPI::Recv(Gen_Displacements[iInst], modes, MPI_DOUBLE, 0, iInst+rank, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
+    }
+
+    for (iInst = 0; iInst < nInstHB; iInst++){
+    
+	  solver_container[iZone][iInst][MESH_0][MESH_SOL]->Calculate_Surface_Displacement(Gen_Displacements[iInst], geometry_container[iZone][iInst][MESH_0], config_container[iZone], iInst);
+
+          iteration_container[iZone][iInst]->SetMesh_Deformation_HB(geometry_container[iZone][iInst], solver_container[iZone][iInst][MESH_0], numerics_container[iZone][iInst][MESH_0], config_container[iZone], iInst, false);
+
+    }
+
+         for (iInst = 0; iInst < nInstHB; iInst++){
+ 
+           delete [] Gen_Forces[iInst];	    
+           delete [] Gen_Displacements[iInst];	    
+       
+         }
+         delete [] Gen_Forces;
+         delete [] Gen_Displacements;     
+
+    }
+    else {
+
+    su2double **aeroel_hb_sol = new su2double*[nInstHB];
+    for (iInst = 0; iInst < nInstHB; iInst++){
+
+      aeroel_hb_sol[iInst] = new su2double[4];	    
+  
+    }
+ 
+	 solver_container[iZone][INST_0][MESH_0][FLOW_SOL]->Aeroelastic_HB(aeroel_hb_sol, geometry_container[iZone][INST_0][MESH_0], config_container[iZone], solver_container[iZone], nInstHB);
+
+
+    for (iInst = 0; iInst < nInstHB; iInst++){
+    if (config_container[iZone]->GetDeform_Mesh()) {
+
+/////////   Geometrical_Restart(config_container[iZone], geometry_container[iZone][iInst]);
+
+/////////   solver_container[iZone][iInst][MESH_0][MESH_SOL]->RestartMeshSolver(geometry_container[iZone][iInst][MESH_0], config_container[iZone]);
+////////
+            solver_container[iZone][iInst][MESH_0][MESH_SOL]->AeroelasticDeformMesh(geometry_container[iZone][iInst], numerics_container[iZone][iInst][MESH_0][MESH_SOL], config_container[iZone], aeroel_hb_sol[iInst], iInst);
+
+    }
+    else {
+
+    iteration_container[iZone][iInst]->SetGrid_AeroelasticMovement(geometry_container[iZone][iInst], surface_movement[iZone], grid_movement[iZone][iInst], solver_container[iZone][iInst], config_container[iZone], iInst, aeroel_hb_sol[iInst]);
+
+    }
+    }
+
+         for (iInst = 0; iInst < nInstHB; iInst++){
+    
+	    delete [] aeroel_hb_sol[iInst];
+         }
+         delete [] aeroel_hb_sol;
+
+    }          
+
+
+    }
+
+
   }
 
 }
+
 bool CFluidDriver::Monitor(unsigned long ExtIter) {
 
   /*--- Synchronization point after a single solver iteration. Compute the
@@ -3457,11 +3763,122 @@ CHBDriver::~CHBDriver(void) {
   }
 }
 
+void CHBDriver::Preprocess(unsigned long Iter) {
+
+  /*--- Instantiate the geometry movement classes for the solution of unsteady
+   flows on dynamic meshes, including rigid mesh transformations, dynamically
+   deforming meshes, and preprocessing of harmonic balance. ---*/
+
+  for (iZone = 0; iZone < nZone; iZone++) {
+
+    if (!config_container[ZONE_0]->GetAeroelasticity_HB()) config_container[iZone]->SetInnerIter(Iter);
+    else config_container[iZone]->SetTimeIter(Iter);
+
+    if (((config_container[iZone]->GetKind_Solver() ==  MAIN_SOLVER::EULER) ||
+          (config_container[iZone]->GetKind_Solver() ==  MAIN_SOLVER::NAVIER_STOKES) ||
+          (config_container[iZone]->GetKind_Solver() ==  MAIN_SOLVER::NEMO_EULER) ||
+          (config_container[iZone]->GetKind_Solver() ==  MAIN_SOLVER::NEMO_NAVIER_STOKES) ||
+          (config_container[iZone]->GetKind_Solver() ==  MAIN_SOLVER::RANS) ||
+          (config_container[iZone]->GetKind_Solver() ==  MAIN_SOLVER::INC_EULER) ||
+          (config_container[iZone]->GetKind_Solver() ==  MAIN_SOLVER::INC_NAVIER_STOKES) ||
+          (config_container[iZone]->GetKind_Solver() ==  MAIN_SOLVER::INC_RANS))
+          && (Iter == 0) ) {
+        for (iInst = 0; iInst < nInst[iZone]; iInst++)
+          solver_container[iZone][iInst][MESH_0][FLOW_SOL]->SetInitialCondition(geometry_container[iZone][iInst], solver_container[iZone][iInst], config_container[iZone], Iter);  
+    }
+
+    if ( config_container[ZONE_0]->HB_Flutter() && Iter>0 ) { 
+        for (iInst = 0; iInst < nInst[iZone]; iInst++){
+        if (rank == MASTER_NODE) cout << "Re-Initialize Flow Solver for Instance: " << iInst << endl;
+           solver_container[ZONE_0][iInst][MESH_0][FLOW_SOL]->ReInitSolver(geometry_container[ZONE_0][iInst][MESH_0], config_container[ZONE_0], MESH_0);
+        }
+    }
+
+  
+  if ( !config_container[iZone]->GetBnd_Velo() && config_container[iZone]->GetHB_Velo() && (config_container[ZONE_0]->HB_LCO() || config_container[ZONE_0]->HB_Flutter() || Iter == 0) ) {
+   
+	  if (rank == MASTER_NODE)
+             cout << "Setting grid Velocities for HB in Zone "<< iZone + 1<<"." << endl;
+   
+   unsigned short jInst; 
+   unsigned short nDim   = geometry_container[iZone][0][MESH_0]->GetnDim();
+   unsigned long  nPointDomain = geometry_container[iZone][0][MESH_0]->GetnPointDomain();
+   unsigned long  nPoint       = geometry_container[iZone][0][MESH_0]->GetnPoint();
+   unsigned short nInst = config_container[iZone]->GetnTimeInstances();
+    su2double *xval       = new su2double[nInstHB];  
+    su2double *velval     = new su2double[nInstHB];  
+
+  ComputeHB_Operator();
+
+////  cout << "proc " << rank << "has: nPointDomain= " << nPointDomain << ", and nPoints= " << nPoint <<  endl;
+
+  SU2_OMP_PARALLEL {
+  SU2_OMP_FOR_STAT(omp_chunk_size)
+  for (unsigned long iPoint = 0; iPoint < nPointDomain; iPoint++){
+    for (unsigned short iDim = 0; iDim < nDim; iDim++) {
+
+	    for (iInst = 0; iInst < nInst; iInst++){
+                /*--- Get the geometry coordinates ---*/
+              xval[iInst] = geometry_container[iZone][iInst][MESH_0]->nodes->GetCoord(iPoint, iDim);
+	    }
+	   
+	    for (iInst = 0; iInst < nInst; iInst++){
+              velval[iInst] = 0.0;
+            for (jInst = 0; jInst < nInst; jInst++){
+                /*--- Calculate grid velocity with HB---*/
+              velval[iInst] += D[iInst][jInst]*xval[jInst];
+	    }
+            geometry_container[iZone][iInst][MESH_0]->nodes->SetGridVel(iPoint, iDim, velval[iInst]);
+	    }  
+	    
+    }
+
+  }
+//  cout << "OK velo calculated" << endl;
+        
+  for (iInst = 0; iInst < nInst; iInst++){
+ /*--- The velocity was computed for nPointDomain, now we communicate it. ---*/
+  geometry_container[iZone][iInst][MESH_0]->InitiateComms(geometry_container[iZone][iInst][MESH_0], config_container[iZone], GRID_VELOCITY);
+  geometry_container[iZone][iInst][MESH_0]->CompleteComms(geometry_container[iZone][iInst][MESH_0], config_container[iZone], GRID_VELOCITY);
+ 
+  //solver_container[iZone][iInst][MESH_0][MESH_SOL]->UpdateMultiGrid(geometry_container[iZone][iInst][MESH_0], config_container[iZone]);
+  }
+  }
+
+  delete [] xval;
+  delete [] velval;
+
+  }
+  } 
+}
+
 
 void CHBDriver::Run() {
 
+  unsigned long IntIter, nIntIter, val_iter;
+
   /*--- Run a single iteration of a Harmonic Balance problem. Preprocess all
    all zones before beginning the iteration. ---*/
+ 
+  if (config_container[ZONE_0]->GetAeroelasticity_HB()) {
+     
+	if (config_container[ZONE_0]->GetTimeIter()<1){
+          nIntIter = 2000;
+          nIntIter = 4*config_container[ZONE_0]->GetnInner_Iter();
+          //nIntIter = config_container[ZONE_0]->GetnInner_Iter();
+	}
+	else{
+           nIntIter = config_container[ZONE_0]->GetnInner_Iter();
+	}
+  }
+  else
+    nIntIter = 1;
+
+  /*--- Run a single iteration of a Harmonic Balance problem. Preprocess all
+   all zones before beginning the iteration. ---*/
+  for (IntIter = 0; IntIter < nIntIter; IntIter++) {
+
+  if (config_container[ZONE_0]->GetAeroelasticity_HB()) config_container[ZONE_0]->SetInnerIter(IntIter); 
 
   for (iInst = 0; iInst < nInstHB; iInst++)
     iteration_container[ZONE_0][iInst]->Preprocess(output_container[ZONE_0], integration_container, geometry_container,
@@ -3479,6 +3896,10 @@ void CHBDriver::Run() {
     for (iInst = 0; iInst < nInst[iZone]; iInst++)
       output_legacy->SetConvHistory_Body(&ConvHist_file[iZone][iInst], geometry_container, solver_container,
           config_container, integration_container, false, UsedTime, iZone, iInst);
+  }
+
+  if (config_container[ZONE_0]->GetAeroelasticity_HB()) Update();
+
   }
 
 }
@@ -3504,6 +3925,28 @@ void CHBDriver::Update() {
         solver_container, numerics_container, config_container,
         surface_movement, grid_movement, FFDBox, ZONE_0, iInst);
 
+  }
+
+}
+
+void CHBDriver::Output(unsigned long Iter) {
+
+  unsigned long IntIter;
+
+  if (config_container[ZONE_0]->GetAeroelasticity_HB()) IntIter = config_container[ZONE_0]->GetInnerIter();
+  else IntIter = Iter;
+
+  for (iZone = 0; iZone < nZone; iZone++) {
+    const auto inst = config_container[iZone]->GetiInst();
+    
+    for (iInst = 0; iInst < nInst[iZone]; ++iInst) {
+      config_container[iZone]->SetiInst(iInst);
+      output_container[iZone]->SetResult_Files(geometry_container[iZone][iInst][MESH_0],
+                                               config_container[iZone],
+                                               solver_container[iZone][iInst][MESH_0],
+                                               IntIter, StopCalc);
+    }
+    config_container[iZone]->SetiInst(inst);
   }
 
 }
@@ -3555,7 +3998,7 @@ void CHBDriver::SetHarmonicBalance(unsigned short iInst) {
   su2double *Psi = new su2double[nVar];
   su2double *Psi_old = new su2double[nVar];
   su2double *Source = new su2double[nVar];
-  su2double deltaU, deltaPsi;
+  su2double deltaU, deltaPsi, Volume_i, Volume_j, Var_new, Var_old;
 
   /*--- Compute period of oscillation ---*/
   su2double period = config_container[ZONE_0]->GetHarmonicBalance_Period();
@@ -3580,20 +4023,32 @@ void CHBDriver::SetHarmonicBalance(unsigned short iInst) {
       /*--- Step across the columns ---*/
       for (jInst = 0; jInst < nInstHB; jInst++) {
 
+        Volume_i = geometry_container[ZONE_0][iInst][iMGlevel]->nodes->GetVolume(iPoint);
+        Volume_j = geometry_container[ZONE_0][jInst][iMGlevel]->nodes->GetVolume(iPoint);
+
         /*--- Retrieve solution at this node in current zone ---*/
         for (iVar = 0; iVar < nVar; iVar++) {
 
           if (!adjoint) {
             U[iVar] = solver_container[ZONE_0][jInst][iMGlevel][FLOW_SOL]->GetNodes()->GetSolution(iPoint, iVar);
-            Source[iVar] += U[iVar]*D[iInst][jInst];
+            Source[iVar] += (U[iVar]*D[iInst][jInst]*Volume_i);
 
             if (implicit) {
               U_old[iVar] = solver_container[ZONE_0][jInst][iMGlevel][FLOW_SOL]->GetNodes()->GetSolution_Old(iPoint, iVar);
               deltaU = U[iVar] - U_old[iVar];
-              Source[iVar] += deltaU*D[iInst][jInst];
+              Source[iVar] += (deltaU*D[iInst][jInst]*Volume_i);
             }
 
+    	    Var_new = solver_container[ZONE_0][iInst][iMGlevel][FLOW_SOL]->GetNodes()->GetSolution(iPoint, iVar);
+            Source[iVar] += (Var_new*D[iInst][jInst]*Volume_j);
+
+            if (implicit) {
+    	      Var_old = solver_container[ZONE_0][iInst][iMGlevel][FLOW_SOL]->GetNodes()->GetSolution_Old(iPoint, iVar);
+              deltaU = Var_new - Var_old;
+              Source[iVar] += (deltaU*D[iInst][jInst]*Volume_j);
+            }
           }
+
 
           else {
             Psi[iVar] = solver_container[ZONE_0][jInst][iMGlevel][ADJFLOW_SOL]->GetNodes()->GetSolution(iPoint, iVar);

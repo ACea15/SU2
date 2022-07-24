@@ -139,6 +139,8 @@ protected:
    */
   void Geometrical_Preprocessing(CConfig *config, CGeometry **&geometry, bool dummy);
 
+  void Geometrical_Restart(CConfig* config, CGeometry **&geometry);
+ 
   /*!
    * \brief Do the geometrical preprocessing for the DG FEM solver.
    */
@@ -247,6 +249,8 @@ protected:
    */
   void DynamicMesh_Preprocessing(CConfig *config, CGeometry **geometry, CSolver ***solver, CIteration *iteration, CVolumetricMovement *&grid_movement, CSurfaceMovement *&surface_movement) const;
 
+  void DynamicMesh_Preprocessing(CConfig *config, CGeometry **geometry, CSolver **solver, CIteration *iteration, CNumerics ***numerics) const;
+
   /*!
    * \brief Initialize Python interface functionalities
    */
@@ -354,6 +358,8 @@ public:
    * \brief Perform some pre-processing before an iteration of the physics.
    */
   virtual void Preprocess(unsigned long TimeIter){ }
+
+  virtual void UpdateFlutterConditions(unsigned long TimeIter, int updt){ }
 
   /*!
    * \brief Monitor the computation.
@@ -842,6 +848,8 @@ public:
    */
   void Preprocess(unsigned long Iter) override;
 
+  void UpdateFlutterConditions(unsigned long Iter, int updt) override;
+
   /*!
    * \brief Perform a dynamic mesh deformation, included grid velocity computation and the update of the multigrid structure (multiple zone).
    */
@@ -942,6 +950,10 @@ public:
    * \brief Run a single iteration of a Harmonic Balance problem.
    */
   void Run() override;
+
+  void Preprocess(unsigned long Iter) override;
+
+  void Output(unsigned long Iter) override;
 
   /*!
    * \brief Computation and storage of the Harmonic Balance method source terms.
