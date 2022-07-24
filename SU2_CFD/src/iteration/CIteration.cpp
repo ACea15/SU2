@@ -259,18 +259,18 @@ void CIteration::SetMesh_Deformation(CGeometry** geometry, CSolver** solver, CNu
 }
 
 void CIteration::SetMesh_Deformation_HB(CGeometry** geometry, CSolver** solver, CNumerics*** numerics, CConfig* config,
-                                     unsigned long iter, RECORDING kind_recording, bool imp) {
+                                     unsigned long iter, bool imp) {
   if (!config->GetDeform_Mesh()) return;
 
   unsigned short modes = config->GetNumber_Modes();
   /*--- Perform the elasticity mesh movement ---*/
 
   bool wasActive = false;
-  if ((kind_recording != RECORDING::MESH_DEFORM) && !config->GetMultizone_Problem()) {
-    /*--- In a primal run, AD::TapeActive returns a false ---*/
-    /*--- In any other recordings, the tape is passive during the deformation. ---*/
-    wasActive = AD::BeginPassive();
-  }
+  // if ((kind_recording != RECORDING::MESH_DEFORM) && !config->GetMultizone_Problem()) {
+  //   /*--- In a primal run, AD::TapeActive returns a false ---*/
+  //   /*--- In any other recordings, the tape is passive during the deformation. ---*/
+  //   wasActive = AD::BeginPassive();
+  // }
 
   //if (config->GetAeroelastic_Modal() && imp) {
   if (imp) {

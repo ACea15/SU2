@@ -108,7 +108,7 @@ class CIteration {
                            CConfig* config_container, RECORDING kind_recording);
 
   void SetMesh_Deformation_HB(CGeometry** geometry, CSolver** solver_container, CNumerics*** numerics_container,
-                           CConfig* config_container, unsigned long TimeIter, RECORDING kind_recording, bool imp);
+                           CConfig* config_container, unsigned long TimeIter, bool imp);
  
   /*!
    * \brief A virtual member.
