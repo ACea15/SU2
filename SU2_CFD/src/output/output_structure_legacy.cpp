@@ -679,6 +679,17 @@ void COutputLegacy::SetConvHistory_Body(ofstream *ConvHist_file,
         SpecialOutput_HarmonicBalance(solver_container, geometry, config, val_iInst, nInst, output_files);
       }
 
+      if (config[val_iZone]->GetAeroelastic_Modal()) {
+      
+      if ((rank == MASTER_NODE) && output_files) cout << "-------------------------------------------------------------------------" << endl << endl;
+      if ((rank == MASTER_NODE) && output_files) cout << "-           Writting GAF for Instance " << val_iInst << "  <<                            -" << endl << endl;
+
+	      SpecialOutput_GAF_coefficients(solver_container, geometry, config, val_iInst, nInst, output_files);
+      
+     // if ((rank == MASTER_NODE) && output_files) cout << "-------------------------------------------------------------------------" << endl << endl;
+      
+      }
+
       /*--- Compute span-wise values file for turbomachinery. ---*/
 
       if (config[val_iZone]->GetBoolTurbomachinery()) {
@@ -6579,14 +6590,21 @@ void COutputLegacy::SpecialOutput_HarmonicBalance(CSolver *****solver, CGeometry
   /*--- Write file with flow quantities for harmonic balance HB ---*/
   ofstream HB_output_file;
   ofstream mean_HB_file;
-
+  ofstream HB_disp_file;
+  ofstream HB_disp_history;
   /*--- MPI Send/Recv buffers ---*/
-  su2double *sbuf_var = nullptr,  *rbuf_var = nullptr;
+  su2double *sbuf_var = nullptr, *disp = nullptr, *rbuf_var = nullptr;
 
   /*--- Other variables ---*/
   unsigned short iVar, kInst;
   unsigned short nVar_output = 5;
   unsigned long current_iter = config[ZONE_0]->GetInnerIter();
+  bool Aeroel_HB = config[ZONE_0]->GetAeroelasticity_HB();
+  su2double OmegaHB = config[ZONE_0]->GetOmega_HB()[1]; 
+  su2double L2strnorm= 100.0;
+  su2double FlutterIndex= 1.0;
+  if (Aeroel_HB) L2strnorm = config[ZONE_0]->GetStr_L2_norm();
+  if (Aeroel_HB) FlutterIndex = config[ZONE_0]->GetAeroelastic_Flutter_Speed_Index();; 
 
   /*--- Allocate memory for send buffer ---*/
   sbuf_var = new su2double[nVar_output];
@@ -6598,10 +6616,29 @@ void COutputLegacy::SpecialOutput_HarmonicBalance(CSolver *****solver, CGeometry
   /*--- Allocate memory for receive buffer ---*/
   if (rank == MASTER_NODE) {
     rbuf_var = new su2double[nVar_output];
+    disp     = new su2double[4];
 
     HB_output_file.precision(15);
     HB_output_file.open("HB_output.csv", ios::out);
     HB_output_file <<  "\"time_instance\",\"CL\",\"CD\",\"CMx\",\"CMy\",\"CMz\"" << endl;
+
+    if (Aeroel_HB) {
+    HB_disp_file.precision(15);
+    HB_disp_file.open("HB_disp.csv", ios::out);
+    HB_disp_file <<  "\"time_instance\",\"Pitch\",\"Plunge\",\"Pitch Rate\",\"Plunge Rate\"" << endl;
+
+    HB_disp_history.precision(15);
+    if (current_iter == 0 && iInst == 0) {
+      HB_disp_history.open("history_dispHB.plt", ios::trunc);
+      HB_disp_history << "TITLE = \"SU2 HARMONIC BALANCE SIMULATION\"" << endl;
+      HB_disp_history <<  "VARIABLES = \"Iteration\",\"H1\",\"H2\",\"H3\",\"H4\",\"H5\"" << endl;
+      HB_disp_history << "ZONE T= \"Average Convergence History\"" << endl;
+    }
+    else
+      HB_disp_history.open("history_dispHB.plt", ios::out | ios::app);
+
+    }
+
 
     mean_HB_file.precision(15);
     if (current_iter == 0 && iInst == 1) {
@@ -6628,6 +6665,11 @@ void COutputLegacy::SpecialOutput_HarmonicBalance(CSolver *****solver, CGeometry
       sbuf_var[3] = solver[ZONE_0][kInst][INST_0][FLOW_SOL]->GetTotal_CMy();
       sbuf_var[4] = solver[ZONE_0][kInst][INST_0][FLOW_SOL]->GetTotal_CMz();
 
+      disp[0] = config[ZONE_0]->GetHB_pitch(kInst);
+      disp[1] = config[ZONE_0]->GetHB_plunge(kInst);
+      disp[2] = config[ZONE_0]->GetHB_pitch_rate(kInst);
+      disp[3] = config[ZONE_0]->GetHB_plunge_rate(kInst);
+
       for (iVar = 0; iVar < nVar_output; iVar++) {
         rbuf_var[iVar] = sbuf_var[iVar];
       }
@@ -6637,11 +6679,24 @@ void COutputLegacy::SpecialOutput_HarmonicBalance(CSolver *****solver, CGeometry
         HB_output_file << rbuf_var[iVar] << ", ";
       HB_output_file << endl;
 
+      if (Aeroel_HB){
+      HB_disp_file << kInst << ", ";
+      for (iVar = 0; iVar < 4; iVar++)
+        HB_disp_file << disp[iVar] << ", ";
+      HB_disp_file << endl;
+
+      if (iInst == INST_0)   HB_disp_history << disp[0] << ", ";
+	
+      }
+
+
       /*--- Increment the total contributions from each zone, dividing by nZone as you go ---*/
       for (iVar = 0; iVar < nVar_output; iVar++) {
         averages[iVar] += (1.0/su2double(val_nInst))*rbuf_var[iVar];
       }
     }
+
+    if (Aeroel_HB && iInst == INST_0) {HB_disp_history << endl;}
   }
 
   if (rank == MASTER_NODE && iInst == INST_0) {
@@ -6651,7 +6706,12 @@ void COutputLegacy::SpecialOutput_HarmonicBalance(CSolver *****solver, CGeometry
       mean_HB_file << averages[iVar];
       if (iVar < nVar_output-1)
         mean_HB_file << ", ";
-    }
+      }
+      if (Aeroel_HB) {
+	   mean_HB_file << ", " << OmegaHB;
+           mean_HB_file << ", " << L2strnorm;
+           mean_HB_file << ", " << FlutterIndex;
+      }
     mean_HB_file << endl;
   }
 
@@ -6659,10 +6719,64 @@ void COutputLegacy::SpecialOutput_HarmonicBalance(CSolver *****solver, CGeometry
     HB_output_file.close();
     mean_HB_file.close();
     delete [] rbuf_var;
+    HB_disp_file.close();
+    delete [] disp;
+    HB_disp_history.close();
   }
 
   delete [] sbuf_var;
   delete [] averages;
+}
+
+void COutputLegacy::SpecialOutput_GAF_coefficients(CSolver *****solver, CGeometry ****geometry, CConfig **config, unsigned short iInst, unsigned short val_nInst, bool output) const {
+
+  /*--- Write file with flow quantities for harmonic balance HB ---*/
+  string outfile="HB_GAF_";
+  string extension=to_string(iInst);
+  string full_file=outfile+extension;
+
+  ofstream GAF_file;
+
+  su2double *gen_forces = nullptr;
+
+  /*--- Other variables ---*/
+  unsigned short kInst;
+  unsigned long current_iter = config[ZONE_0]->GetInnerIter();
+  unsigned short modes = config[ZONE_0]->GetNumber_Modes();
+
+  /*--- Allocate memory for send buffer ---*/
+  gen_forces = new su2double[modes];
+ 
+  solver[ZONE_0][iInst][MESH_0][MESH_SOL]->Calculate_Generalized_Forces(gen_forces, geometry[ZONE_0][iInst][MESH_0], solver[ZONE_0][iInst][MESH_0][FLOW_SOL], config[ZONE_0], iInst);
+
+  if (rank == MASTER_NODE) {
+  /*--- Allocate memory for receive buffer ---*/
+    GAF_file.precision(15);
+    GAF_file.open(full_file, ios::out);
+    GAF_file <<  "\"MODE\",\"FORCE\"" << endl;
+
+  }
+
+  if (rank == MASTER_NODE) {
+
+    /*--- Run through the zones, collecting the output variables
+       N.B. Summing across processors within a given zone is being done
+       elsewhere. ---*/
+    for (kInst = 0; kInst < modes; kInst++) {
+
+      GAF_file << kInst << ", ";
+      GAF_file << gen_forces[kInst] ;
+      GAF_file << endl;
+
+    }
+  }
+
+  if (rank == MASTER_NODE) {
+    GAF_file.close();
+  }
+
+  delete [] gen_forces;
+
 }
 
 void COutputLegacy::SetSpecial_Output(CSolver *****solver_container,

@@ -263,6 +263,8 @@ public:
    */
   void SpecialOutput_HarmonicBalance(CSolver *****solver, CGeometry ****geometry, CConfig **config, unsigned short iZone, unsigned short val_nZone, bool output) const;
 
+  void SpecialOutput_GAF_coefficients(CSolver *****solver, CGeometry ****geometry, CConfig **config, unsigned short iZone, unsigned short val_nZone, bool output) const;
+
   /*!
    * \brief Writes the special output files.
    * \param[in] solver_container - Container vector with all the solutions.

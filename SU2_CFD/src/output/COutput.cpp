@@ -254,6 +254,16 @@ void COutput::OutputScreenAndHistory(CConfig *config) {
   if (rank == MASTER_NODE && !noWriting) {
 
     if (WriteHistoryFile_Output(config)) SetHistoryFile_Output(config);
+    
+    if (WriteHistoryFile_Output(config) && config->GetAeroelastic_Modal()){
+
+          cout << "Writing Modal Disp. " << endl;
+	  ofstream Aeroelastic_output_file;
+          Aeroelastic_output_file.open("Aeroelastic_disp.csv", ios::out | ios::app);
+     	  Aeroelastic_output_file << config->GetAeroelastic_pitch(0)      << ", " << config->GetAeroelastic_plunge(0)  << endl;
+          Aeroelastic_output_file.close();
+
+    }
 
     if (WriteScreen_Header(config)) SetScreen_Header(config);
 
