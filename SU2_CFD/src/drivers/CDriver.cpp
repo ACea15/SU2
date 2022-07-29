@@ -3834,6 +3834,8 @@ void CHBDriver::Preprocess(unsigned long Iter) {
     }
 
   }
+    END_SU2_OMP_FOR
+
 //  cout << "OK velo calculated" << endl;
         
   for (iInst = 0; iInst < nInst; iInst++){
@@ -3844,6 +3846,7 @@ void CHBDriver::Preprocess(unsigned long Iter) {
   //solver_container[iZone][iInst][MESH_0][MESH_SOL]->UpdateMultiGrid(geometry_container[iZone][iInst][MESH_0], config_container[iZone]);
   }
   }
+  END_SU2_OMP_PARALLEL
 
   delete [] xval;
   delete [] velval;

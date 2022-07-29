@@ -568,7 +568,7 @@ void CMeshSolver::DeformMeshHB(CGeometry **geometry, CNumerics **numerics, CConf
   SU2_OMP_PARALLEL {
     LinSysRes.SetValZero();
   }
-
+  END_SU2_OMP_PARALLEL
   /*--- Impose boundary conditions (all of them are ESSENTIAL BC's - displacements). ---*/
   SetBoundaryDisplacementsHB(geometry[MESH_0], numerics[FEA_TERM], TimeIter, config);
   
@@ -595,7 +595,7 @@ void CMeshSolver::DeformMeshHB(CGeometry **geometry, CNumerics **numerics, CConf
   SetMinMaxVolume(geometry[MESH_0], config, true);
 
   } // end parallel
-
+  END_SU2_OMP_PARALLEL
 }
 
 void CMeshSolver::AeroelasticDeformMesh(CGeometry **geometry, CNumerics **numerics, CConfig *config, su2double* structural_solution, unsigned long iter) {
@@ -635,7 +635,7 @@ void CMeshSolver::AeroelasticDeformMesh(CGeometry **geometry, CNumerics **numeri
   SU2_OMP_PARALLEL {
     LinSysRes.SetValZero();
   }
-
+  END_SU2_OMP_PARALLEL
   /*--- Impose boundary conditions (all of them are ESSENTIAL BC's - displacements). ---*/
   SetBoundaryDisplacements(geometry[MESH_0], config, false);
  
