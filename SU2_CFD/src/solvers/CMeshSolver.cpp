@@ -671,6 +671,7 @@ void CMeshSolver::AeroelasticDeformMesh(CGeometry **geometry, CNumerics **numeri
   SetMinMaxVolume(geometry[MESH_0], config, true);
 
   } // end parallel
+  END_SU2_OMP_PARALLEL
 
 }
 
