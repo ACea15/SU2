@@ -3813,7 +3813,7 @@ void CHBDriver::Preprocess(unsigned long Iter) {
 ////  cout << "proc " << rank << "has: nPointDomain= " << nPointDomain << ", and nPoints= " << nPoint <<  endl;
 
   SU2_OMP_PARALLEL {
-  SU2_OMP_FOR_STAT(omp_chunk_size)
+    //SU2_OMP_FOR_STAT(omp_chunk_size)
   for (unsigned long iPoint = 0; iPoint < nPointDomain; iPoint++){
     for (unsigned short iDim = 0; iDim < nDim; iDim++) {
 
@@ -3834,7 +3834,7 @@ void CHBDriver::Preprocess(unsigned long Iter) {
     }
 
   }
-    END_SU2_OMP_FOR
+  //END_SU2_OMP_FOR
 
 //  cout << "OK velo calculated" << endl;
         
