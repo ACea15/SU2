@@ -1148,6 +1148,7 @@ private:
   unsigned long nOuterIter,      /*!< \brief Determines the number of outer iterations in the multizone problem */
   nInnerIter,                    /*!< \brief Determines the number of inner iterations in each multizone block */
   nAeroIter,
+  CurrAeroIter=0,
   nFreqIter,
   nTimeIter,                     /*!< \brief Determines the number of time iterations in the multizone problem */
   nIter,                         /*!< \brief Determines the number of pseudo-time iterations in a single-zone problem */
@@ -9311,6 +9312,9 @@ public:
   unsigned long GetnInner_Iter(void) const { return nInnerIter; }
 
   unsigned long GetnAero_Iter(void) const { return nAeroIter; }
+
+  unsigned long GetCurrAero_Iter(void) const { return CurrAeroIter; }
+  void SetCurrAero_Iter(unsigned long val_iter) { CurrAeroIter = val_iter; }
 
   unsigned long GetnFreq_Iter(void) const { return nFreqIter; }
 

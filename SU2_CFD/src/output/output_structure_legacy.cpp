@@ -6599,6 +6599,8 @@ void COutputLegacy::SpecialOutput_HarmonicBalance(CSolver *****solver, CGeometry
   unsigned short iVar, kInst;
   unsigned short nVar_output = 5;
   unsigned long current_iter = config[ZONE_0]->GetInnerIter();
+  unsigned long curr_aero_iter = config[ZONE_0]->GetCurrAero_Iter();
+  unsigned long out_iter = config[ZONE_0]->GetVolumeOutputFrequency(0)-1;
   bool Aeroel_HB = config[ZONE_0]->GetAeroelasticity_HB();
   su2double OmegaHB = config[ZONE_0]->GetOmega_HB()[1]; 
   su2double L2strnorm= 100.0;
@@ -6628,7 +6630,7 @@ void COutputLegacy::SpecialOutput_HarmonicBalance(CSolver *****solver, CGeometry
     HB_disp_file <<  "\"time_instance\",\"Pitch\",\"Plunge\",\"Pitch Rate\",\"Plunge Rate\"" << endl;
 
     HB_disp_history.precision(15);
-    if (current_iter == 0 && iInst == 0) {
+    if (current_iter == 0 && iInst == 0 && curr_aero_iter == 0) {
       HB_disp_history.open("history_dispHB.plt", ios::trunc);
       HB_disp_history << "TITLE = \"SU2 HARMONIC BALANCE SIMULATION\"" << endl;
       HB_disp_history <<  "VARIABLES = \"Iteration\",\"H1\",\"H2\",\"H3\",\"H4\",\"H5\"" << endl;
@@ -6641,17 +6643,17 @@ void COutputLegacy::SpecialOutput_HarmonicBalance(CSolver *****solver, CGeometry
 
 
     mean_HB_file.precision(15);
-    if (current_iter == 0 && iInst == 1) {
+    if (current_iter == 0 && iInst == 0 && curr_aero_iter == 0) {
       mean_HB_file.open("history_HB.plt", ios::trunc);
       mean_HB_file << "TITLE = \"SU2 HARMONIC BALANCE SIMULATION\"" << endl;
-      mean_HB_file <<  "VARIABLES = \"Iteration\",\"CL\",\"CD\",\"CMx\",\"CMy\",\"CMz\",\"CT\",\"CQ\",\"CMerit\"" << endl;
+      mean_HB_file <<  "VARIABLES = \"Iteration\",\"CL\",\"CD\",\"CMx\",\"CMy\",\"CMz\",\"Freq\",\"L2\",\"FVI\"" << endl;
       mean_HB_file << "ZONE T= \"Average Convergence History\"" << endl;
     }
     else
       mean_HB_file.open("history_HB.plt", ios::out | ios::app);
   }
 
-  if (rank == MASTER_NODE) {
+  if (rank == MASTER_NODE && current_iter == out_iter) {
 
     /*--- Run through the zones, collecting the output variables
        N.B. Summing across processors within a given zone is being done
@@ -6699,7 +6701,7 @@ void COutputLegacy::SpecialOutput_HarmonicBalance(CSolver *****solver, CGeometry
     if (Aeroel_HB && iInst == INST_0) {HB_disp_history << endl;}
   }
 
-  if (rank == MASTER_NODE && iInst == INST_0) {
+  if (rank == MASTER_NODE && iInst == INST_0 && current_iter == out_iter) {
 
     mean_HB_file << current_iter << ", ";
     for (iVar = 0; iVar < nVar_output; iVar++) {

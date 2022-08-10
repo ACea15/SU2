@@ -3796,7 +3796,8 @@ void CHBDriver::Preprocess(unsigned long Iter) {
 
   
   if ( !config_container[iZone]->GetBnd_Velo() && config_container[iZone]->GetHB_Velo() && (config_container[ZONE_0]->HB_LCO() || config_container[ZONE_0]->HB_Flutter() || Iter == 0) ) {
-   
+  
+	  config_container[iZone]->SetCurrAero_Iter(Iter); 
 	  if (rank == MASTER_NODE)
              cout << "Setting grid Velocities for HB in Zone "<< iZone + 1<<"." << endl;
    
@@ -3812,8 +3813,8 @@ void CHBDriver::Preprocess(unsigned long Iter) {
 
 ////  cout << "proc " << rank << "has: nPointDomain= " << nPointDomain << ", and nPoints= " << nPoint <<  endl;
 
-  SU2_OMP_PARALLEL {
-    //SU2_OMP_FOR_STAT(omp_chunk_size)
+  ///SU2_OMP_PARALLEL {
+ //// SU2_OMP_FOR_STAT(omp_chunk_size)
   for (unsigned long iPoint = 0; iPoint < nPointDomain; iPoint++){
     for (unsigned short iDim = 0; iDim < nDim; iDim++) {
 
@@ -3834,8 +3835,7 @@ void CHBDriver::Preprocess(unsigned long Iter) {
     }
 
   }
-  //END_SU2_OMP_FOR
-
+ //// END_SU2_OMP_FOR
 //  cout << "OK velo calculated" << endl;
         
   for (iInst = 0; iInst < nInst; iInst++){
@@ -3845,8 +3845,8 @@ void CHBDriver::Preprocess(unsigned long Iter) {
  
   //solver_container[iZone][iInst][MESH_0][MESH_SOL]->UpdateMultiGrid(geometry_container[iZone][iInst][MESH_0], config_container[iZone]);
   }
-  }
-  END_SU2_OMP_PARALLEL
+  //}
+  ///END_SU2_OMP_PARALLEL
 
   delete [] xval;
   delete [] velval;
