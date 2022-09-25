@@ -2092,7 +2092,7 @@ void CMeshSolver::SetStructuralModes(CGeometry *geometry, CConfig *config) {
   string Marker_Tag, Moving_Tag;
   unsigned short iDim;
   su2double phi_x, phi_y, phi_z, phi_as, phi_ss;
-  unsigned long nps = config->GetNumber_STR_Nodes();
+  unsigned long nps; //= config->GetNumber_STR_Nodes();
   unsigned short STRmodes = config->GetNumber_Modes();
   unsigned short method = config->Get_RBF_method();
   unsigned long dofs = config->Get_STR_Dofs(); // STR is a surface here
@@ -2102,31 +2102,134 @@ void CMeshSolver::SetStructuralModes(CGeometry *geometry, CConfig *config) {
   static SU2_MPI::Status mpi_status;
 
   string f1;
-  string filename = config->Get_STR_name(), line;
+  string filename = config->Get_STR_name();
   string fullfile_mesh = filename + ".vertices";
   string fullfile_mode = filename + ".mode";
   string extension;
-  stringstream ss;
+  // stringstream ss;
 	      
   ifstream modefile;
   ifstream meshfile;
 
   vector<su2double> xa(3,0.0), xs1(3,0.0), xs2(3,0.0);
-  su2double dummy1, dummy2, dummy3;
-  vector<su2double> PHI_X_str(nps,0.0);
-  vector<su2double> PHI_Y_str(nps,0.0);
-  vector<su2double> PHI_Z_str(nps,0.0);
+  // su2double dummy1, dummy2, dummy3;
+  // vector<su2double> PHI_X_str(nps,0.0);
+  // vector<su2double> PHI_Y_str(nps,0.0);
+  // vector<su2double> PHI_Z_str(nps,0.0);
+  vector<su2double> PHI_X_str;
+  vector<su2double> PHI_Y_str;
+  vector<su2double> PHI_Z_str;
 
-  vector<su2double> sol_vec_x(nps+dofs+1,0.0);
-  vector<su2double> sol_vec_y(nps+dofs+1,0.0);
-  vector<su2double> sol_vec_z(nps+dofs+1,0.0);
+  // vector<su2double> sol_vec_x(nps+dofs+1,0.0);
+  // vector<su2double> sol_vec_y(nps+dofs+1,0.0);
+  // vector<su2double> sol_vec_z(nps+dofs+1,0.0);
 
-  vector<su2double> X_str(nps,0.0);
-  vector<su2double> Y_str(nps,0.0);
-  vector<su2double> Z_str(nps,0.0);
+  // vector<su2double> X_str(nps,0.0);
+  // vector<su2double> Y_str(nps,0.0);
+  // vector<su2double> Z_str(nps,0.0);
+  vector<su2double> X_str;
+  vector<su2double> Y_str;
+  vector<su2double> Z_str;
  
-  vector<vector<su2double>> Css(1+dofs+nps,vector<su2double>(1+dofs+nps+1,0.0));
+  // vector<vector<su2double>> Css(1+dofs+nps,vector<su2double>(1+dofs+nps+1,0.0));
 
+  //////
+  vector<su2double> Xi_nodes;
+  vector<su2double> Yi_nodes;
+  vector<su2double> Zi_nodes;
+  vector<vector<su2double>> X_nodes;
+  vector<vector<su2double>> Y_nodes;
+  vector<vector<su2double>> Z_nodes;
+  ifstream file(fullfile_mesh);
+  string line;
+  double val_xi, val_yi, val_zi;
+  int mi = 0;
+
+  if (file.is_open()) {
+        while(getline(file, line, '\n'))        
+        {
+            if (line.find('#') != std::string::npos)
+            {
+                if (mi > 1)
+                {
+                X_nodes.push_back(Xi_nodes);
+                Y_nodes.push_back(Yi_nodes);
+                Z_nodes.push_back(Zi_nodes);
+                Xi_nodes.clear();
+                Yi_nodes.clear();
+                Zi_nodes.clear();
+                }
+                mi++;
+            }
+            else{
+                std::istringstream ss(line);        
+                //read word by word(or double by double)                 
+                ss >> val_xi >> val_yi >> val_zi;
+                Xi_nodes.push_back(val_xi);
+                Yi_nodes.push_back(val_yi);
+                Zi_nodes.push_back(val_zi);
+            }
+        }
+    file.close();
+    X_nodes.push_back(Xi_nodes);
+    Y_nodes.push_back(Yi_nodes);
+    Z_nodes.push_back(Zi_nodes);
+  }
+  ////////
+
+  vector<vector<su2double>> Xi_modes[STRmodes];
+  vector<vector<su2double>> Yi_modes[STRmodes];
+  vector<vector<su2double>> Zi_modes[STRmodes];  
+  vector<su2double> X_si; // per mode and surface 
+  vector<su2double> Y_si;
+  vector<su2double> Z_si;
+  string line_m;
+  double valm_xi, valm_yi, valm_zi;
+
+  for (int i_m=0; i_m < STRmodes; i_m++) {
+      std::string file_name_mode = fullfile_mode + std::to_string(i_m + 1);
+      std::ifstream file(file_name_mode);
+      int mi = 0;
+      if (file.is_open()) {
+	    while(getline(file, line_m, '\n'))        
+	    {
+		//create a temporary vector that will contain all the columns            
+
+		if (line_m.find('#') != std::string::npos)
+		{
+		    //std::cout<<"line - "<< line << std::endl;
+		  if (mi > 1)  // push surface
+		    {
+		    Xi_modes[i_m].push_back(X_si);
+		    Yi_modes[i_m].push_back(Y_si);
+		    Zi_modes[i_m].push_back(Z_si);
+		    X_si.clear();
+		    Y_si.clear();
+		    Z_si.clear();
+		    }
+		    mi++;
+		}
+		else{
+		    std::istringstream ss(line_m);        
+		    //read word by word(or double by double)                 
+		    ss >> valm_xi >> valm_yi >> valm_zi;
+		    X_si.push_back(valm_xi);
+		    Y_si.push_back(valm_yi);
+		    Z_si.push_back(valm_zi);
+		}
+	    }
+	file.close();
+	Xi_modes[i_m].push_back(X_si);
+	Yi_modes[i_m].push_back(Y_si);
+	Zi_modes[i_m].push_back(Z_si);
+	X_si.clear();
+	Y_si.clear();
+	Z_si.clear();
+      }
+  }
+
+
+  ////////  
   if (rank == MASTER_NODE) cout << "Setting Structural Modes on Aerodynamic Surface" << endl;
   if (rank == MASTER_NODE) cout << "Mesh filename : " << fullfile_mesh << endl;
      /*--- Store displacement of each node on the plunging surface ---*/
@@ -2138,6 +2241,15 @@ void CMeshSolver::SetStructuralModes(CGeometry *geometry, CConfig *config) {
     Marker_Tag = config->GetMarker_All_TagBound(iMarker);
 
     for (jMarker = 0; jMarker < config->GetnMarker_Moving(); jMarker++) {
+      
+      // X_str = X_nodes[jMarker];
+      // Y_str = Y_nodes[jMarker];
+      // Z_str = Z_nodes[jMarker];
+      nps = X_nodes[jMarker].size();
+      vector<vector<su2double>> Css(1+dofs+nps,vector<su2double>(1+dofs+nps+1,0.0));
+      vector<su2double> sol_vec_x(nps+dofs+1,0.0);
+      vector<su2double> sol_vec_y(nps+dofs+1,0.0);
+      vector<su2double> sol_vec_z(nps+dofs+1,0.0);
 
       Moving_Tag = config->GetMarker_Moving_TagBound(jMarker);
 
@@ -2151,33 +2263,34 @@ void CMeshSolver::SetStructuralModes(CGeometry *geometry, CConfig *config) {
       //SU2_OMP_MASTER
       if (rank == MASTER_NODE){
 
-	      meshfile.open(fullfile_mesh);
+      // meshfile.open(fullfile_mesh);
 
       kk = 0;
       cout << "Reading structural (Surface) nodes." << endl;
-      if (meshfile.is_open()) {	
+      
+      // if (meshfile.is_open()) {	
 	      
-	getline(meshfile,line);
+      // 	getline(meshfile,line);
 
-	while ( kk < nps ){
+      // 	while ( kk < nps ){
 	
-	meshfile >> X_str[kk] >> Y_str[kk] >> Z_str[kk];
+      // 	meshfile >> X_str[kk] >> Y_str[kk] >> Z_str[kk];
 
-	kk++;
+      // 	kk++;
 
-	}
+      // 	}
 
-	meshfile.close();
-	if (rank == MASTER_NODE) cout << "Reached End-of-file for Structural Mesh." <<  endl;
+      // 	meshfile.close();
+      // 	if (rank == MASTER_NODE) cout << "Reached End-of-file for Structural Mesh." <<  endl;
 	
-      }	
-      else cout << "Unable to open Mesh file..." << endl; 
-
+      // }	
+      // else cout << "Unable to open Mesh file..." << endl; 
+						       
 #ifdef HAVE_MPI
       for (int destination=1;destination<size;destination++){
-	      SU2_MPI::Send(&X_str[0], nps, MPI_DOUBLE, destination, 0, SU2_MPI::GetComm());
-	      SU2_MPI::Send(&Y_str[0], nps, MPI_DOUBLE, destination, 0, SU2_MPI::GetComm());
-	      SU2_MPI::Send(&Z_str[0], nps, MPI_DOUBLE, destination, 0, SU2_MPI::GetComm());
+	      SU2_MPI::Send(&X_nodes[jMarker][0], nps, MPI_DOUBLE, destination, 0, SU2_MPI::GetComm());
+	      SU2_MPI::Send(&Y_nodes[jMarker][0], nps, MPI_DOUBLE, destination, 0, SU2_MPI::GetComm());
+	      SU2_MPI::Send(&Z_nodes[jMarker][0], nps, MPI_DOUBLE, destination, 0, SU2_MPI::GetComm());
       }
 #endif
 
@@ -2185,21 +2298,21 @@ void CMeshSolver::SetStructuralModes(CGeometry *geometry, CConfig *config) {
       for (unsigned long ii=0;ii<nps;ii++){
 
 	      Css[0][dofs+1+ii] = 1.0;
-	      Css[1][dofs+1+ii] = X_str[ii];
-	      Css[2][dofs+1+ii] = Y_str[ii];
-	      if (dofs==3) Css[3][dofs+1+ii] = Z_str[ii];
+	      Css[1][dofs+1+ii] = X_nodes[jMarker][ii];
+	      Css[2][dofs+1+ii] = Y_nodes[jMarker][ii];
+	      if (dofs==3) Css[3][dofs+1+ii] = Z_nodes[jMarker][ii];
 
 	      Css[dofs+1+ii][0] = 1.0;
-	      Css[dofs+1+ii][1] = X_str[ii];
-	      Css[dofs+1+ii][2] = Y_str[ii];
-	      if (dofs==3) Css[dofs+1+ii][3] = Z_str[ii];
+	      Css[dofs+1+ii][1] = X_nodes[jMarker][ii];
+	      Css[dofs+1+ii][2] = Y_nodes[jMarker][ii];
+	      if (dofs==3) Css[dofs+1+ii][3] = Z_nodes[jMarker][ii];
       }
 
       for (unsigned long ii=0;ii<nps;ii++){
       for (unsigned long jj=0;jj<nps;jj++){
 	      
-	      xs1[0] = X_str[ii] ; xs1[1] = Y_str[ii] ; xs1[2] = Z_str[ii];
-	      xs2[0] = X_str[jj] ; xs2[1] = Y_str[jj] ; xs2[2] = Z_str[jj];
+	      xs1[0] = X_nodes[jMarker][ii] ; xs1[1] = Y_nodes[jMarker][ii] ; xs1[2] = Z_nodes[jMarker][ii];
+	      xs2[0] = X_nodes[jMarker][jj] ; xs2[1] = Y_nodes[jMarker][jj] ; xs2[2] = Z_nodes[jMarker][jj];
 
 	      phi_ss = RBF_Basis_Function(xs1,xs2,method);
 
@@ -2216,9 +2329,9 @@ void CMeshSolver::SetStructuralModes(CGeometry *geometry, CConfig *config) {
       else {
 
 #if HAVE_MPI
-	      SU2_MPI::Recv(&X_str[0], nps, MPI_DOUBLE, 0, 0, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
-	      SU2_MPI::Recv(&Y_str[0], nps, MPI_DOUBLE, 0, 0, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
-	      SU2_MPI::Recv(&Z_str[0], nps, MPI_DOUBLE, 0, 0, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
+	      SU2_MPI::Recv(&X_nodes[jMarker][0], nps, MPI_DOUBLE, 0, 0, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
+	      SU2_MPI::Recv(&Y_nodes[jMarker][0], nps, MPI_DOUBLE, 0, 0, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
+	      SU2_MPI::Recv(&Z_nodes[jMarker][0], nps, MPI_DOUBLE, 0, 0, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
 #endif
 
       }
@@ -2228,32 +2341,35 @@ void CMeshSolver::SetStructuralModes(CGeometry *geometry, CConfig *config) {
       // READ STR MODES
       if (rank == MASTER_NODE) {  
 
-	      ss << mode+1;
-	      extension = to_string(mode+1);
-	      modefile.open(fullfile_mode+extension);
+	      // ss << mode+1;
+	      // extension = to_string(mode+1);
+	      // modefile.open(fullfile_mode+extension);
 
-      kk = 0;
-      cout << "Reading Structural Mode " << mode+1 << " from file : " << fullfile_mode+extension << endl; 
-      if (modefile.is_open()) {
+      // kk = 0;
+      // cout << "Reading Structural Mode " << mode+1 << " from file : " << fullfile_mode+extension << endl; 
+      // if (modefile.is_open()) {
 
-	getline(modefile,line);
+      // 	getline(modefile,line);
 
-	while (kk < nps) {
+      // 	while (kk < nps) {
 	
-	modefile >> dummy1 >> dummy2 >> dummy3;
+      // 	modefile >> dummy1 >> dummy2 >> dummy3;
 
-	PHI_X_str[kk] = dummy1;
-	PHI_Y_str[kk] = dummy2;
-	PHI_Z_str[kk] = dummy3;
+      // 	PHI_X_str[kk] = dummy1;
+      // 	PHI_Y_str[kk] = dummy2;
+      // 	PHI_Z_str[kk] = dummy3;
 
-	kk++;
-	}
+      // 	kk++;
+      // 	}
 	
-	modefile.close();
-	if (rank == MASTER_NODE) cout << "End-of-file for Mode " <<  mode+1 << endl;
+      // 	modefile.close();
+      // 	if (rank == MASTER_NODE) cout << "End-of-file for Mode " <<  mode+1 << endl;
 	
-      }	
-      else cout << "Unable to read Mode... " << endl; 
+      // }	
+      // else cout << "Unable to read Mode... " << endl; 
+      // PHI_X_str = Xi_modes[mode][jMarker];
+      // PHI_Y_str = Yi_modes[mode][jMarker];
+      // PHI_Z_str = Zi_modes[mode][jMarker];
 
       if (rank == MASTER_NODE) {
         cout << " Storing Mode " << mode+1 <<  " displacement, for marker : ";
@@ -2261,17 +2377,17 @@ void CMeshSolver::SetStructuralModes(CGeometry *geometry, CConfig *config) {
       }
 
       /*--- RBF SYSTEM. ---*/
-      for (unsigned long ii=0;ii<nps;ii++) Css[dofs+1+ii][dofs+1+nps] = PHI_X_str[ii]; 
+      for (unsigned long ii=0;ii<nps;ii++) Css[dofs+1+ii][dofs+1+nps] = Xi_modes[mode][jMarker][ii]; 
       for (unsigned long ii=0;ii<nps+dofs+1;ii++) sol_vec_x[ii] = 0.0;
  
       Gauss_Elimination(Css, sol_vec_x);
  
-      for (unsigned long ii=0;ii<nps;ii++) Css[dofs+1+ii][dofs+1+nps] = PHI_Y_str[ii]; 
+      for (unsigned long ii=0;ii<nps;ii++) Css[dofs+1+ii][dofs+1+nps] = Yi_modes[mode][jMarker][ii]; 
       for (unsigned long ii=0;ii<nps+dofs+1;ii++) sol_vec_y[ii] = 0.0;
  
       Gauss_Elimination(Css, sol_vec_y);
  
-      for (unsigned long ii=0;ii<nps;ii++) Css[dofs+1+ii][dofs+1+nps] = PHI_Z_str[ii]; 
+      for (unsigned long ii=0;ii<nps;ii++) Css[dofs+1+ii][dofs+1+nps] = Zi_modes[mode][jMarker][ii]; 
       for (unsigned long ii=0;ii<nps+dofs+1;ii++) sol_vec_z[ii] = 0.0;
  
       Gauss_Elimination(Css, sol_vec_z);
@@ -2324,7 +2440,7 @@ void CMeshSolver::SetStructuralModes(CGeometry *geometry, CConfig *config) {
 
 	for (unsigned long ii=0;ii<nps;ii++){
 
-		xs1[0] = X_str[ii] ; xs1[1] = Y_str[ii] ; xs1[2] = Z_str[ii];
+		xs1[0] = X_nodes[jMarker][ii] ; xs1[1] = Y_nodes[jMarker][ii] ; xs1[2] = Z_nodes[jMarker][ii];
 
 		phi_as = RBF_Basis_Function(xa,xs1,method);
  

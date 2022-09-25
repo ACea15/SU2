@@ -125,9 +125,22 @@ protected:
    * \param[in] geometry - Geometrical definition of the problem.
    */
   void RestartOldGeometry(CGeometry *geometry, const CConfig *config);
-  
+
+  /*!
+   * \brief A virtual member - no used, other approach with velocities.
+   * \param[in] geometry - Geometrical definition.
+   * \param[in] numerics - Description of the numerical method.
+   * \param[in] config - Definition of the particular problem.
+   */
   void SetBoundaryVelocities(CGeometry *geometry, CNumerics *numerics, CConfig *config);
 
+  /*!
+   * \brief A virtual member. for fixed displacements
+   * \param[in] geometry - Geometrical definition.
+   * \param[in] iter - 
+   * \param[in] numerics - Description of the numerical method.
+   * \param[in] config - Definition of the particular problem.
+   */
   void SetBoundaryDisplacementsHB(CGeometry *geometry, CNumerics *numerics, unsigned long iter, CConfig *config);
 
 public:
@@ -145,10 +158,24 @@ public:
                   CNumerics **numerics,
                   CConfig *config) override;
 
+  /*!
+   * \brief 
+   * \param[in] geometry - Geometrical definition of the problem.
+   * \param[in] numerics - 
+   * \param[in] config - Definition of the particular problem.
+   * \param[in] iter
+   */
   void DeformMeshHB(CGeometry **geometry,
                   CNumerics **numerics,
                   CConfig *config, unsigned long iter) override;
 
+  /*!
+   * \brief Grid deformation using the linear elasticity equations.
+   * \param[in] geometry - Geometrical definition of the problem.
+   * \param[in] config - Definition of the particular problem.
+   * \param[in] structural_solution - .
+   * \param[in] iter
+   */
   void AeroelasticDeformMesh(CGeometry **geometry, CNumerics **numerics, 
 		             CConfig *config, su2double* structural_solution, 
 			     unsigned long iter) override;
@@ -228,6 +255,13 @@ public:
    */
   void Surface_Plunging(CGeometry *geometry, CConfig *config, unsigned long iter);
 
+  /*!
+   * \brief (for the 2D)
+   * \param[in] geometry - Geometrical definition of the problem.
+   * \param[in] config - Definition of the particular problem.
+   * \param[in] structural_solution??
+   * \param[in] iter - Current time iteration number
+   */
   void Surface_Aeroelastic(CGeometry *geometry, CConfig *config, vector<su2double> &structural_solution, unsigned long iter);
 
   /*!
@@ -238,14 +272,42 @@ public:
    */
   void Surface_Translating(CGeometry *geometry, CConfig *config, unsigned long iter);
 
+  /*!
+   * \brief 
+   * \param[in] geometry - Geometrical definition of the problem.
+   * \param[in] config - Definition of the particular problem.
+   */
   void SetStructuralModes(CGeometry *geometry, CConfig *config);
 
+  /*!
+   * \brief 
+   * \param[in] A??
+   * \param[in] sol??
+   */
   void Gauss_Elimination(vector<vector<su2double>> A,vector<su2double> &sol);
- 
+
+  /*!
+   * \brief 
+   * \param[in] ??
+   * \param[in] 
+   * \param[in] 
+   */
   su2double RBF_Basis_Function(vector<su2double> x1, vector<su2double> x2, unsigned short method);
 
+  /*!
+   * \brief 
+   * \param[in] 
+   * \param[in] 
+   * \param[in] 
+   */
   void Calculate_Generalized_Forces(su2double* &gen_forces, CGeometry *geometry, CSolver *flow_solution, CConfig *config, unsigned long TimeIter); 
 
+  /*!
+   * \brief 
+   * \param[in] 
+   * \param[in] 
+   * \param[in] 
+   */
   void Calculate_Surface_Displacement(su2double* gen_disp, CGeometry *geometry, CConfig *config, unsigned long TimeIter);
 
 };
