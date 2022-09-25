@@ -1165,7 +1165,7 @@ void CEulerSolver::SetNondimensionalization(CConfig *config, unsigned short iMes
         Temperature_FreeStream = TgammaR / (config->GetGas_Constant()*1.4);
         config->SetTemperature_FreeStream(Temperature_FreeStream);
       }  
-      else if (free_stream_temp && (aeroelastic || aeroelastic_hb)) {
+     else if (free_stream_temp && (aeroelastic || aeroelastic_hb)) {
         Temperature_FreeStream = TgammaR / (config->GetGas_Constant()*1.4);
         config->SetTemperature_FreeStream(Temperature_FreeStream);
       }

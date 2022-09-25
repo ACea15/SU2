@@ -876,6 +876,13 @@ public:
                                 const CConfig *config,
                                 unsigned short val_marker) { }
 
+  /*!
+   * \brief A virtual member.
+   * \param[in] geometry - Geometrical definition of the problem.
+   * \param[in] numerics - Description of the numerical method.
+   * \param[in] config - Definition of the particular problem.
+   * \param[in] val_marker - Surface marker where the boundary condition is applied.
+   */
   inline virtual void BC_Velocity(CGeometry *geometry,
                                    CNumerics *numerics,
                                    const CConfig *config,
@@ -3338,6 +3345,11 @@ public:
                                           CConfig *config,
                                           unsigned long TimeIter) { }
 
+  /*!
+   * \brief A virtual member initialases inlet constions.
+   * \param[in] geometry - Geometrical definition of the problem.
+   * \param[in] config - Definition of the particular problem.
+   */
   inline virtual void ReInitSolver(CGeometry *geometry, CConfig *config,
                            unsigned short iMesh) { }
 
@@ -3482,8 +3494,17 @@ public:
                          su2double* rhs,
                          unsigned short nVar);
 
+  /*!
+   * \brief Gauss method for solving a linear system.
+   * \param[in] A - Matrix Ax = b.
+   * \param[in] rhs - Right hand side.
+   * \param[in] nVar - Number of variables.
+   */
   void Gauss_Elimination(vector<vector<su2double>>& A,vector<su2double>& sol);
 
+  /*!
+   * \brief 
+   */ 
   void Inverse_matrix2D(vector<vector<su2double>> &Phi, vector<vector<su2double>> &Phi_inv);
 
   /*!
@@ -3498,10 +3519,26 @@ public:
                    CConfig *config,
                    unsigned long TimeIter);
 
+  /*!
+   * \brief Prepares and solves the aeroelastic equations (2D) removed.
+   * \param[in] aero_solutions - .
+   * \param[in] geometry - Geometrical definition of the problem.
+   * \param[in] config - Definition of the particular problem.
+   * \param[in] Cm - ??.
+   * \param[in] harmonics - ??.
+   */
   void Aeroelastic_HB(su2double**& aero_solutions, CGeometry *geometry, 
                       CConfig *config, su2double* Cl, su2double* Cd, 
                       su2double* Cm, int harmonics);
 
+  /*!
+   * \brief Prepares and solves the aeroelastic equations.
+   * \param[in] aero_solutions - .
+   * \param[in] geometry - Geometrical definition of the problem.
+   * \param[in] config - Definition of the particular problem.
+   * \param[in] solver - .
+   * \param[in] Instances - ??.
+   */
   void Aeroelastic_HB(su2double**& aero_solutions, CGeometry *geometry, 
                       CConfig *config, CSolver ****solver, 
                       int Instances);
@@ -3512,21 +3549,52 @@ public:
 //                 CConfig *config,
 //                 unsigned long TimeIter);
 
+  /*!
+   * \brief Time marching with imposed movements.
+   * \param[in] structural_solution - .
+   * \param[in] gen_forces - .
+   * \param[in] geometry - .
+   * \param[in] config - Definition of the particular problem.
+   * \param[in] TimeIter - ??.
+   */
   void AeroelasticWing(su2double* &structural_solution, 
 		       su2double* gen_forces, 
 		       CGeometry *geometry, CConfig *config, 
 		       unsigned long TimeIter);
 
+  /*!
+   * \brief One used for HB.
+   * \param[in] structural_solution - .
+   * \param[in] gen_forces - .
+   * \param[in] geometry - .
+   * \param[in] config - Definition of the particular problem.
+   * \param[in] harmonics - ??.
+   */
   void AeroelasticWing_HB(su2double** &structural_solution, 
 		          su2double** &gen_forces, 
 		          CGeometry *geometry, CConfig *config,
                           int harmonics);
 
+  /*!
+   * \brief gen_disp times modal shapes.
+   * \param[in] structural_solution - .
+   * \param[in] gen_forces - .
+   * \param[in] geometry - .
+   * \param[in] config - Definition of the particular problem.
+   * \param[in] harmonics - ??.
+   */
   inline virtual void Calculate_Surface_Displacement(su2double* gen_disp, 
 		                                     CGeometry *geometry, 
 			                             CConfig *config,
 						     unsigned long TimeIter) { }
 
+  /*!
+   * \brief same as above.
+   * \param[in] gen_forces - .
+   * \param[in] geometry - .
+   * \param[in] config - Definition of the particular problem.
+   * \param[in] TimeIter - =5??.
+   */
   inline virtual void Calculate_Generalized_Forces(su2double*& gen_forces, 
 		                                     CGeometry *geometry, 
 						     CSolver *flow_solution,
@@ -3558,91 +3626,195 @@ public:
                                     unsigned short val_Marker,
                                     vector<su2double>& displacements);
 
+  /*!
+   * \brief solve aeroelastics.
+   * \param[in] val_Marker
+   * \param[in] forces
+   * \param[in] displacements
+   */
   void SolveModalWing(CGeometry *geometry,
                       CConfig *config,
                       unsigned short val_Marker,
                       su2double*& forces,
                       su2double*& displacements);
   
+  /*!
+   * \brief .
+   * \param[in] val_Marker
+   * \param[in] forces
+   * \param[in] displacements
+   * \param[in] harmonics
+   */  
   void SolveModalWing_HB(CGeometry *geometry,
                          CConfig *config,
                          unsigned short val_Marker,
                          su2double**& forces,
                          su2double**& displacements,
-                         int harmonics); 
-
+                         int harmonics);
+  
+  /*!
+   * \brief HB solution for 2D airfoil.
+   * \param[in] 
+   * \param[in] forces
+   * \param[in] displacements
+   */
   void SolveWing_HB_Unst2D(CGeometry *geometry, CConfig *config, 
                            unsigned short iMarker, 
                            vector<vector<su2double>>& displacements, 
                            vector<su2double> cl, vector<su2double> cd, 
                            vector<su2double> cm, int harmonics);
 
-    void SolveWing_HB_Thomas(CGeometry *geometry, CConfig *config, 
+  /*!
+   * \brief to solve the modal wing (didnt work).
+   * \param[in] 
+   * \param[in] 
+   * \param[in] 
+   */
+  void SolveWing_HB_Thomas(CGeometry *geometry, CConfig *config, 
 		           unsigned short iMarker, 
 			   vector<vector<su2double>>& displacements, 
 			   vector<su2double> cl, vector<su2double> cd, 
 			   vector<su2double> cm, int harmonics);
 
+  /*!
+   * \brief .
+   * \param[in] 
+   * \param[in] 
+   * \param[in] 
+   */
   void SolveWing_HB_Thomas_Flutter(CGeometry *geometry, CConfig *config, 
 		                      unsigned short iMarker, 
 				      vector<vector<su2double>>& displacements, 
 				      vector<su2double> cl, vector<su2double> cd, 
 				      vector<su2double> cm, int harmonics);
-
+  /*!
+   * \brief .
+   * \param[in] 
+   * \param[in] forces
+   * \param[in] displacements
+   */
   void SolveWing_HB_Thomas_Velocity(CGeometry *geometry, CConfig *config, 
 		                      unsigned short iMarker, 
 				      vector<vector<su2double>>& displacements, 
 				      vector<su2double> cl, vector<su2double> cd, 
 				      vector<su2double> cm, int harmonics);
-
+  /*!
+   * \brief D and E.
+   * \param[in] 
+   * \param[in] forces
+   * \param[in] displacements
+   */
   void HB_Operator(CConfig *config, vector<vector<su2double>>& D, 
                    vector<vector<su2double>>& E, int nInstHB, 
                    su2double Omega);
-
+  /*!
+   * \brief different definition.
+   * \param[in] 
+   * \param[in] forces
+   * \param[in] displacements
+   */
   void HB_Operator_Complex(CConfig *config, vector<vector<su2double>>& D, 
                    vector<vector<su2double>>& E, int nInstHB, 
                    su2double Omega);
-
+  /*!
+   * \brief doesnt work.
+   * \param[in] 
+   * \param[in] forces
+   * \param[in] displacements
+   */
   void Frequency_Velocity_Update_2D(CConfig *config, su2double* lift, 
                                     su2double* drag, su2double* moment, 
                                     int harmonics, bool &error_flag);
-
+  /*!
+   * \brief .
+   * \param[in] 
+   * \param[in] forces
+   * \param[in] displacements
+   */
   void Velocity_Update_2D(CConfig *config, su2double* lift, 
                           su2double* drag, su2double* moment, 
                           int harmonics, bool &error_flag);
-
+  /*!
+   * \brief currently doesnt work.
+   * \param[in] 
+   * \param[in] forces
+   * \param[in] displacements
+   */
   void Velocity_Update_2D2(CConfig *config, su2double* lift, 
                            su2double* drag, su2double* moment, 
                            int harmonics, bool &error_flag);
-
+  /*!
+   * \brief flutter velocity update.
+   * \param[in] 
+   * \param[in] forces
+   * \param[in] displacements
+   */
   void Velocity_Update_3D(CConfig *config,  
                           su2double**& gen_forces, 
                           int harmonics, bool &error_flag);
 
+  /*!
+   * \brief doesnt work.
+   * \param[in] 
+   * \param[in] forces
+   * \param[in] displacements
+   */
   void Frequency_Velocity_Update_3D(CConfig *config,  
                                     su2double**& gen_forces, 
                                     int harmonics, bool &error_flag);
 
+  /*!
+   * \brief dtw.
+   * \param[in] 
+   * \param[in] forces
+   * \param[in] displacements
+   */
   void Frequency_Velocity_Update_2D2(CConfig *config, su2double* lift, 
                                      su2double* drag, su2double* moment, 
                                      int harmonics, bool &error_flag);
 
+  /*!
+   * \brief dtw.
+   * \param[in] 
+   * \param[in] forces
+   * \param[in] displacements
+   */
   void Frequency_Velocity_Update_2D4(CConfig *config, su2double* lift, 
                                      su2double* drag, su2double* moment, 
                                      int harmonics, bool &error_flag);
-
+  /*!
+   * \brief .
+   * \param[in] 
+   * \param[in] forces
+   * \param[in] displacements
+   */
   void Frequency_Update_2D(CConfig *config, su2double* lift, 
                            su2double* drag, su2double* moment, 
                            int harmonics, bool &error_flag);
-
+  /*!
+   * \brief .
+   * \param[in] 
+   * \param[in] forces
+   * \param[in] displacements
+   */
   void Frequency_Update_3D(CConfig *config,
                            su2double**& gen_forces,
                            int harmonics, bool &error_flag);
-
+  /*!
+   * \brief .
+   * \param[in] 
+   * \param[in] forces
+   * \param[in] displacements
+   */
   void Frequency_Update_2D2(CConfig *config, su2double* lift, 
                            su2double* drag, su2double* moment, 
                            int harmonics, bool &error_flag);
-
+  /*!
+   * \brief .
+   * \param[in] 
+   * \param[in] forces
+   * \param[in] displacements
+   */
   void Frequency_Update_Phy(CConfig *config, su2double* lift, 
                             su2double* drag, su2double* moment, 
                             int harmonics, bool &error_flag);
@@ -4277,11 +4449,21 @@ public:
   inline virtual void DeformMesh(CGeometry **geometry,
                                  CNumerics **numerics,
                                  CConfig *config) { }
-
+  /*!
+   * \brief A virtual member - solve messh deformation for HB.
+   * \param[in] geometry - Geometrical definition.
+   * \param[in] config - Definition of the particular problem.
+   * \param[in] referenceCoord - Determine if the mesh is deformed from the reference or from the current coordinates.
+   */
   inline virtual void DeformMeshHB(CGeometry **geometry,
                                  CNumerics **numerics,
                                  CConfig *config, unsigned long iter) { }
-
+  /*!
+   * \brief A virtual member solve mesh aeroelastics deformation for HB.
+   * \param[in] geometry - Geometrical definition.
+   * \param[in] config - Definition of the particular problem.
+   * \param[in] referenceCoord - Determine if the mesh is deformed from the reference or from the current coordinates.
+   */
   inline virtual void AeroelasticDeformMesh(CGeometry **geometry, CNumerics **numerics, 
 		                            CConfig *config, su2double* structural_solution, 
 					    unsigned long iter) {}

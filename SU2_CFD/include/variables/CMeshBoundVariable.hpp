@@ -36,7 +36,7 @@ private:
 
   MatrixType Boundary_Displacement;  /*!< \brief Store the reference coordinates of the mesh. */
   MatrixType Boundary_Velocity;      /*!< \brief Store the boundary velocities of the mesh. */
-  MatrixType Boundary_Modes_X;  /*!< \brief Store the reference coordinates of the mesh. */
+  MatrixType Boundary_Modes_X;  /*!< \brief Store the reference coordinates of the mesh. ?? all X,Y,Z make sure initialisation for each aerodynamic surface*/ 
   MatrixType Boundary_Modes_Y;  /*!< \brief Store the reference coordinates of the mesh. */
   MatrixType Boundary_Modes_Z;  /*!< \brief Store the reference coordinates of the mesh. */
 
@@ -136,7 +136,7 @@ public:
   }
 
   /*!
-   * \brief Set the boundary displacement.
+   * \brief Set the boundary displacement of modes.
    * \param[in] iDim - Index of the dimension of interest.
    * \param[in] val_BoundDisp - Value of the boundary displacements.
    */

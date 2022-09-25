@@ -51,7 +51,7 @@ class CIteration {
       size;                   /*!< \brief MPI Size. */
   const unsigned short nZone; /*!< \brief Total number of zones in the problem. */
   const unsigned short nInst; /*!< \brief Total number of instances in the problem. */
-
+  
   const bool multizone, /*!< \brief Flag for multizone problems. */
       singlezone;       /*!< \brief Flag for singlezone problems. */
 
@@ -90,10 +90,31 @@ class CIteration {
                                 CVolumetricMovement* grid_movement, CSolver*** solver, CConfig* config,
                                 unsigned long IntIter, unsigned long TimeIter);
 
+  /*!
+   * \brief 2D rigid mesh movement
+   * \author 
+   * \param[in] geometry - Geometrical definition of the problem.
+   * \param[in] surface_movement - Surface movement classes of the problem.
+   * \param[in] grid_movement - Volume grid movement classes of the problem.
+   * \param[in] solver - Container vector with all the solutions.
+   * \param[in] config - Definition of the particular problem.
+   * \param[in] IntIter - Current psuedo time iteration number.
+   * \param[in] TimeIter - Current physical time iteration number.
+   */
   void SetGrid_AeroelasticMovement(CGeometry** geometry, CSurfaceMovement* surface_movement,
                                   CVolumetricMovement* grid_movement, CSolver*** solver, CConfig* config,
                                   unsigned short TimeIter, su2double * str_solution);
- 
+  /*!
+   * \brief maybe time marching
+   * \author 
+   * \param[in] geometry - Geometrical definition of the problem.
+   * \param[in] surface_movement - Surface movement classes of the problem.
+   * \param[in] grid_movement - Volume grid movement classes of the problem.
+   * \param[in] solver - Container vector with all the solutions.
+   * \param[in] config - Definition of the particular problem.
+   * \param[in] IntIter - Current psuedo time iteration number.
+   * \param[in] TimeIter - Current physical time iteration number.
+   */ 
   void SetAeroelastic_Mesh_Deformation(CGeometry** geometry, CSolver** solver, CNumerics*** numerics, CConfig* config,
                                   unsigned long IntIter, unsigned long TimeIter);
   /*!
@@ -107,6 +128,17 @@ class CIteration {
   void SetMesh_Deformation(CGeometry** geometry, CSolver** solver_container, CNumerics*** numerics_container,
                            CConfig* config_container, RECORDING kind_recording);
 
+  /*!
+   * \brief step for the mash deformation
+   * \author 
+   * \param[in] geometry - Geometrical definition of the problem.
+   * \param[in] surface_movement - Surface movement classes of the problem.
+   * \param[in] grid_movement - Volume grid movement classes of the problem.
+   * \param[in] solver - Container vector with all the solutions.
+   * \param[in] config - Definition of the particular problem.
+   * \param[in] IntIter - Current psuedo time iteration number.
+   * \param[in] TimeIter - Current physical time iteration number.
+   */ 
   void SetMesh_Deformation_HB(CGeometry** geometry, CSolver** solver_container, CNumerics*** numerics_container,
                            CConfig* config_container, unsigned long TimeIter, bool imp);
  

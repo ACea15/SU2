@@ -118,8 +118,8 @@ private:
   Wind_Gust,                /*!< \brief Flag to know if there is a wind gust. */
   Turb_Fixed_Values,        /*!< \brief Flag to know if there are fixed values for turbulence quantities in one half-plane. */
   Aeroelastic_Simulation,   /*!< \brief Flag to know if there is an aeroelastic simulation. */
-  Aeroelastic_Modal,
-  Aeroelastic_Imposed,
+  Aeroelastic_Modal,        /*!< \brief Flag to activate Modal_Aeroelasticity in dynamic mesh definition. */
+  Aeroelastic_Imposed,      /*!< \brief Flag to activate Modal_Imposed in dynamic mesh definition. */
   Weakly_Coupled_Heat,      /*!< \brief Flag to know if a heat equation should be weakly coupled to the incompressible solver. */
   Rotating_Frame,           /*!< \brief Flag to know if there is a rotating frame. */
   PoissonSolver,            /*!< \brief Flag to know if we are solving  poisson forces  in plasma solver. */
@@ -165,7 +165,7 @@ private:
   unsigned short *Design_Variable;   /*!< \brief Kind of design variable. */
   unsigned short nTimeInstances;     /*!< \brief Number of periodic time instances for  harmonic balance. */
   su2double HarmonicBalance_Period;  /*!< \brief Period of oscillation to be used with harmonic balance computations. */
-  su2double STR_L2_norm;
+  su2double STR_L2_norm;            /*!< \brief Structural residual */
   su2double Delta_UnstTime,          /*!< \brief Time step for unsteady computations. */
   Delta_UnstTimeND;                  /*!< \brief Time step for unsteady computations (non dimensional). */
   su2double Delta_DynTime,        /*!< \brief Time step for dynamic structural computations. */
@@ -402,7 +402,7 @@ private:
   unsigned long OuterIter;          /*!< \brief Current Outer iterations for multizone problems. */
   unsigned long InnerIter;          /*!< \brief Current inner iterations for multizone problems. */
   unsigned long TimeIter;           /*!< \brief Current time iterations for multizone problems. */
-  unsigned long AeroIter;
+  unsigned long AeroIter;           /*!< \brief Aeroelastic iterations HB */
   long Unst_AdjointIter;            /*!< \brief Iteration number to begin the reverse time integration in the direct solver for the unsteady adjoint. */
   long Iter_Avg_Objective;          /*!< \brief Iteration the number of time steps to be averaged, counting from the back */
   su2double PhysicalTime;           /*!< \brief Physical time at the current iteration in the solver for unsteady problems. */
@@ -553,9 +553,9 @@ private:
   FEM_SHOCK_CAPTURING_DG Kind_FEM_Shock_Capturing_DG; /*!< \brief Shock capturing method for the FEM DG solver. */
   BGS_RELAXATION Kind_BGS_RelaxMethod; /*!< \brief Kind of relaxation method for Block Gauss Seidel method in FSI problems. */
   bool ReconstructionGradientRequired; /*!< \brief Enable or disable a second gradient calculation for upwind reconstruction only. */
-  bool Bnd_Velo, HB_Velo;
-  bool HBAero_flag;
-  bool HB_LCO_flag, HB_Flutter_flag;
+  bool Bnd_Velo, HB_Velo;  /*!< \brief Two appoaches -first one is old*/
+  bool HBAero_flag;         /*!< \brief Aeroelastic HB ??*/
+  bool HB_LCO_flag, HB_Flutter_flag; /*!< \brief Aeroelastic HB for flutter and LCOs prediction*/
   bool LeastSquaresRequired;    /*!< \brief Enable or disable memory allocation for least-squares gradient methods. */
   bool Energy_Equation;         /*!< \brief Solve the energy equation for incompressible flows. */
 
@@ -766,9 +766,9 @@ private:
   *RefOriginMoment_X,    /*!< \brief X Origin for moment computation. */
   *RefOriginMoment_Y,    /*!< \brief Y Origin for moment computation. */
   *RefOriginMoment_Z,    /*!< \brief Z Origin for moment computation. */
-  *RefOriginMoment_X_HB,    /*!< \brief X Origin for moment computation. */
-  *RefOriginMoment_Y_HB,    /*!< \brief Y Origin for moment computation. */
-  *RefOriginMoment_Z_HB,    /*!< \brief Z Origin for moment computation. */ 
+  *RefOriginMoment_X_HB,    /*!< \brief X Origin for moment (2D) HB computation. */
+  *RefOriginMoment_Y_HB,    /*!< \brief Y Origin for moment HB computation. */
+  *RefOriginMoment_Z_HB,    /*!< \brief Z Origin for moment HB computation. */ 
   *CFL_AdaptParam,       /*!< \brief Information about the CFL ramp. */
   *RelaxFactor_Giles,    /*!< \brief Information about the under relaxation factor for Giles BC. */
   *CFL,                  /*!< \brief CFL number. */
@@ -935,7 +935,7 @@ private:
   *MarkerPitching_Phase,          /*!< \brief Pitching phase offset of marker. */
   *MarkerPlunging_Omega,          /*!< \brief Angular frequency of marker.. */
   *MarkerPlunging_Ampl,           /*!< \brief Plunging amplitude of marker. */
-  *MarkerPlunging_Phase;
+  *MarkerPlunging_Phase;          /*!< \brief Phase of marker. */
 
   unsigned short
   nMarkerMotion_Origin,           /*!< \brief Number of values provided for mesh motion origin of marker. */
@@ -948,15 +948,15 @@ private:
   nMarkerPlunging_Ampl,           /*!< \brief Number of values provided for plunging amplitude of marker. */
   nMarkerPlunging_Phase,
   nRough_Wall;                    /*!< \brief Number of rough walls. */
-  su2double  *Omega_HB,
-	     *Omega_Aero,
-             *Omega_Mode,
-	     *Ampl_Mode;           /*!< \brief Frequency for Harmonic Balance Operator (in rad/s). */
-  su2double  *Pitch_HB;
+  su2double  *Omega_HB,           /*!< \brief  List of frequencies to be resolved for harmonic balance method */
+	     *Omega_Aero,         /*!< \brief Structural natural freqs of input modal shapes for HB  */
+             *Omega_Mode,        /*!< \brief fixed aeroelastic frequencies for HB solution (in rad/s).  */ 
+	     *Ampl_Mode;           /*!< \brief fixed aeroelastic amplitudes for HB solution (in rad/s). */
+  su2double  *Pitch_HB;            /*!< \brief Tracking displacements (output file)           . */
   su2double  *Plunge_HB;
   su2double  *Pitch_rate_HB;
-  su2double  *Plunge_rate_HB;
-  vector<vector<su2double>> Mod_Velo_HB,
+  su2double  *Plunge_rate_HB;           
+  vector<vector<su2double>> Mod_Velo_HB, /*!< \brief stores the generalised modal displacements in HB. */
                             Mod_Disp_HB;
   unsigned short
   nOmega_HB,                      /*!< \brief Number of frequencies in Harmonic Balance Operator. */
@@ -967,10 +967,10 @@ private:
   Aeroelastic_n1;                 /*!< \brief Aeroelastic solution at time level n-1. */
   su2double FlutterSpeedIndex,    /*!< \brief The flutter speed index. */
   PlungeNaturalFrequency,         /*!< \brief Plunging natural frequency for Aeroelastic. */
-  RootChord,
-  TipChord,
-  WingSpan,
-  WingVol,
+  RootChord,                      /*!< \brief Reference (for HB) wing-root chord */
+  TipChord,                       /*!< \brief Reference (for HB) wing-tip chord */
+  WingSpan,                       /*!< \brief Reference (for HB) wing span */
+  WingVol,                        /*!< \brief Reference (for HB) wing volume truncated cone */
   PitchNaturalFrequency,          /*!< \brief Pitch natural frequency for Aeroelastic. */
   AirfoilMassRatio,               /*!< \brief The airfoil mass ratio for Aeroelastic. */
   CG_Location,                    /*!< \brief Center of gravity location for Aeroelastic. */
@@ -978,12 +978,12 @@ private:
   su2double *Aeroelastic_plunge,  /*!< \brief Value of plunging coordinate at the end of an external iteration. */
   *Aeroelastic_pitch;             /*!< \brief Value of pitching coordinate at the end of an external iteration. */
   unsigned short AeroelasticIter; /*!< \brief Solve the aeroelastic equations every given number of internal iterations. */
-  unsigned short nWingModes,
-		 RBF_Method,
-                 nWingDofs;
-  string STR_File;
-  unsigned long nSTRpoints;
-  su2double Scale_Parameter;
+  unsigned short nWingModes,   /*!< \brief Number of modes in the HB solution. */
+		 RBF_Method,   /*!< \brief Type of RBF method in the HB solution. */
+                 nWingDofs;    /*!< \brief DoF of the modes i.e. 2 for shell, 3 for solid. */
+  string STR_File;             /*!< \brief File name for modal shapes. */
+  unsigned long nSTRpoints;    /*!< \brief Total number of points of each mode. */
+  su2double Scale_Parameter;   /*!< \brief Scale parameter for the HB aeroelastic computation, = 1/m with m=rho_structure \times volume-truncated-cone. */
   unsigned short Gust_Type,   /*!< \brief Type of Gust. */
   Gust_Dir;                   /*!< \brief Direction of the gust */
   su2double Gust_WaveLength,  /*!< \brief The gust wavelength. */
@@ -1147,16 +1147,16 @@ private:
   bool Time_Domain;              /*!< \brief Determines if the multizone problem is solved in time-domain */
   unsigned long nOuterIter,      /*!< \brief Determines the number of outer iterations in the multizone problem */
   nInnerIter,                    /*!< \brief Determines the number of inner iterations in each multizone block */
-  nAeroIter,
-  CurrAeroIter=0,
-  nFreqIter,
+  nAeroIter,                     /*!< \brief Number of Aeroelastic iterations HB */               
+  CurrAeroIter=0,                /*!< \brief Aeroelastic iterations HB */
+  nFreqIter,                     /*!< \brief No used */
   nTimeIter,                     /*!< \brief Determines the number of time iterations in the multizone problem */
   nIter,                         /*!< \brief Determines the number of pseudo-time iterations in a single-zone problem */
   Restart_Iter;                  /*!< \brief Determines the restart iteration in the multizone problem */
   su2double Time_Step;           /*!< \brief Determines the time step for the multizone problem */
   su2double Max_Time;            /*!< \brief Determines the maximum time for the time-domain problems */
 
-  su2double PseudoTimeStep;
+  su2double PseudoTimeStep;     /*!< \brief HB pseudo time step for the structure, convergence of the HB */
   unsigned long HistoryWrtFreq[3],    /*!< \brief Array containing history writing frequencies for timer iter, outer iter, inner iter */
                 ScreenWrtFreq[3];     /*!< \brief Array containing screen writing frequencies for timer iter, outer iter, inner iter */
   OUTPUT_TYPE* VolumeOutputFiles;     /*!< \brief File formats to output */
@@ -8345,7 +8345,10 @@ public:
 
   }
 
-  su2double GetAeroelastic_Frequency_Torsion(void) const { return Omega_Aero[1]; }
+   /*!
+   * \brief ?? ad-hoc definition of torsional freq. can be removed
+   */
+  su2double GetAeroelastic_Frequency_Torsion(void) const { return Omega_Aero[1]; } 
 
     /*!
    * \brief Uncoupled Aeroelastic Frequency Plunge.

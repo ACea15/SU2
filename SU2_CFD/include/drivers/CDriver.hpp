@@ -138,7 +138,10 @@ protected:
    * \brief Construction of the edge-based data structure and the multigrid structure.
    */
   void Geometrical_Preprocessing(CConfig *config, CGeometry **&geometry, bool dummy);
-
+  
+  /*!
+   * \
+   */
   void Geometrical_Restart(CConfig* config, CGeometry **&geometry);
  
   /*!
@@ -249,6 +252,9 @@ protected:
    */
   void DynamicMesh_Preprocessing(CConfig *config, CGeometry **geometry, CSolver ***solver, CIteration *iteration, CVolumetricMovement *&grid_movement, CSurfaceMovement *&surface_movement) const;
 
+  /*!
+   * \
+   */ 
   void DynamicMesh_Preprocessing(CConfig *config, CGeometry **geometry, CSolver **solver, CIteration *iteration, CNumerics ***numerics) const;
 
   /*!
@@ -358,7 +364,10 @@ public:
    * \brief Perform some pre-processing before an iteration of the physics.
    */
   virtual void Preprocess(unsigned long TimeIter){ }
-
+  
+  /*!
+   * \ updt??
+   */ 
   virtual void UpdateFlutterConditions(unsigned long TimeIter, int updt){ }
 
   /*!
@@ -848,6 +857,9 @@ public:
    */
   void Preprocess(unsigned long Iter) override;
 
+  /*!
+   * \
+   */
   void UpdateFlutterConditions(unsigned long Iter, int updt) override;
 
   /*!
@@ -951,8 +963,14 @@ public:
    */
   void Run() override;
 
+  /*!
+   * \brief Perform some pre-processing before an iteration of the physics.
+   */
   void Preprocess(unsigned long Iter) override;
-
+  
+  /*!
+   * \brief Output the solution in solution file.
+   */
   void Output(unsigned long Iter) override;
 
   /*!

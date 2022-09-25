@@ -278,6 +278,14 @@ public:
    */
   void Rigid_Rotation(CGeometry *geometry, CConfig *config, unsigned short iZone, unsigned long iter);
 
+  /*!
+   * \brief Move each node in the volume mesh using the specified type of rigid mesh motion.
+   * \param[in] geometry - Geometrical definition of the problem.
+   * \param[in] config - Definition of the particular problem.
+   * \param[in] iZone - Zone number in the mesh.
+   * \param[in] iter - Physical time iteration number.
+   * \param[in] str_solution - ??
+   */
   void Rigid_Aeroelastic(CGeometry *geometry, CConfig *config, unsigned short iZone, unsigned long iter, su2double* str_solution);
 
   /*!

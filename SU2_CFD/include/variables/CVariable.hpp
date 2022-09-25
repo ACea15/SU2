@@ -2085,18 +2085,47 @@ public:
    * \param[in] val_BoundVel - Value of the boundary velocity.
    */
   inline virtual void SetBound_Vel(unsigned long iPoint, unsigned long iDim, const su2double val_BoundVel) { }
+  
+  /*!
+   * \brief A virtual member. Get the modal boundary, .
+   * \param[in] mode - index of the mode.
+   */
   inline virtual su2double GetBound_Mode_X(unsigned long iPoint, unsigned short mode) const { return 0.0; }
-
+  
+  /*!
+   * \brief A virtual member. .
+   */
   inline virtual su2double GetBound_Mode_Y(unsigned long iPoint, unsigned short mode) const { return 0.0; }
 
+  /*!
+   * \brief A virtual member. .
+   */
   inline virtual su2double GetBound_Mode_Z(unsigned long iPoint, unsigned short mode) const { return 0.0; }
 
+  /*!
+   * \brief A virtual member. .
+   */
   inline virtual void SetBound_Mode(unsigned long iPoint, unsigned short mode, const su2double *val_BoundDisp) { }
 
+  /*!
+   * \brief A virtual member. Set the boundary velocity.
+   * \param[in] iDim - Index of the dimension of interest.
+   * \param[in] val_BoundVel - Value of the boundary velocity.
+   */
   inline virtual void SetBound_Mode_X(unsigned long iPoint, unsigned short mode, const su2double val_BoundDisp) { }
 
+  /*!
+   * \brief A virtual member. Set the boundary velocity.
+   * \param[in] iDim - Index of the dimension of interest.
+   * \param[in] val_BoundVel - Value of the boundary velocity.
+   */
   inline virtual void SetBound_Mode_Y(unsigned long iPoint, unsigned short mode, const su2double val_BoundDisp) { }
 
+  /*!
+   * \brief A virtual member. Set the boundary velocity.
+   * \param[in] iDim - Index of the dimension of interest.
+   * \param[in] val_BoundVel - Value of the boundary velocity.
+   */
   inline virtual void SetBound_Mode_Z(unsigned long iPoint, unsigned short mode, const su2double val_BoundDisp) { }
  
 

@@ -2142,7 +2142,9 @@ void CConfig::SetConfig_Options() {
   addEnumListOption("SURFACE_MOVEMENT",nKind_SurfaceMovement, Kind_SurfaceMovement, SurfaceMovement_Map);
   /* DESCRIPTION: Marker(s) of moving surfaces (MOVING_WALL or DEFORMING grid motion). */
   addBoolOption("BOUNDARY_VELOCITY", Bnd_Velo, false);
+  /* DESCRIPTION:  */
   addBoolOption("HB_VELOCITY", HB_Velo, false);
+  /* DESCRIPTION: Marker(s) of moving surfaces for HB */
   addStringListOption("MARKER_MOVING", nMarker_Moving, Marker_Moving);
   /* DESCRIPTION: Marker(s) of gradient problem boundaries. */
   addStringListOption("MARKER_SOBOLEVBC", nMarker_SobolevBC, Marker_SobolevBC);
@@ -2531,7 +2533,9 @@ void CConfig::SetConfig_Options() {
   addUnsignedLongOption("OUTER_ITER", nOuterIter, 1);
   /* DESCRIPTION: Number of inner iterations in each multizone block. */
   addUnsignedLongOption("INNER_ITER", nInnerIter, 1);
+  /* DESCRIPTION: Aeroelastic iterations for HB solution. */
   addUnsignedLongOption("AERO_ITER", nAeroIter, 1);
+  /* DESCRIPTION: ever used?? */
   addUnsignedLongOption("FREQ_ITER", nFreqIter, 1);
   addDoubleOption("PSEUDO_TIME_STEP", PseudoTimeStep, 1.0); 
   /* DESCRIPTION: Number of time steps solved in the multizone problem. */

@@ -1013,7 +1013,13 @@ public:
                            CSolver ***solver_container,
                            CConfig *config,
                            unsigned long TimeIter) final;
-
+  
+  /*!
+   * \brief .
+   * \param[in] geometry - Geometrical definition of the problem.
+   * \param[in] config - Definition of the particular problem.
+   * \param[in] iMesh - 
+   */
   void ReInitSolver(CGeometry *geometry, CConfig *config,
                            unsigned short iMesh) override;
 
