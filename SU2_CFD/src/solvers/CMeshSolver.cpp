@@ -2694,7 +2694,8 @@ void CMeshSolver::Calculate_Generalized_Forces(su2double* &gen_forces, CGeometry
 
   /*--- Store displacement of each node on the plunging surface ---*/
   /*--- Loop over markers and find the particular marker(s) (surface) to plunge ---*/
-
+  for (unsigned short mode=0;mode<STRmodes;mode++) gen_forces[mode]=0.0;
+  
   for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
     if (config->GetMarker_All_Moving(iMarker) != YES) continue;
 
@@ -2713,25 +2714,25 @@ void CMeshSolver::Calculate_Generalized_Forces(su2double* &gen_forces, CGeometry
      for computing the force coefficients. Otherwise, use the freestream values,
      which is the standard convention. ---*/
 
-      for (unsigned short mode=0;mode<STRmodes;mode++) gen_forces[mode]=0.0;
+      //for (unsigned short mode=0;mode<STRmodes;mode++) gen_forces[mode]=0.0;
 
       if (rank == MASTER_NODE) {
         cout << " Calculating Gen. Forces, Z axis component, for marker: ";
         cout << Marker_Tag << "." << endl; 
       }
 
-      //for (iVertex = 0; iVertex < geometry->nVertex[iMarker]; iVertex++) {
-      for (iVertex = 0; iVertex < geometry->GetnVertex(jMarker); iVertex++) {
+      for (iVertex = 0; iVertex < geometry->nVertex[iMarker]; iVertex++) {
+      //for (iVertex = 0; iVertex < geometry->GetnVertex(jMarker); iVertex++) {
 
         /*--- Set node displacement for volume deformation ---*/
 
-        iPoint = geometry->vertex[jMarker][iVertex]->GetNode();
-
+        //iPoint = geometry->vertex[jMarker][iVertex]->GetNode();
+	iPoint = geometry->vertex[iMarker][iVertex]->GetNode();
 	Pressure = flow_nodes->GetPressure(iPoint);
 
         if (geometry->nodes->GetDomain(iPoint)) 
 	{
-	Normal = geometry->vertex[jMarker][iVertex]->GetNormal();
+	Normal = geometry->vertex[iMarker][iVertex]->GetNormal();
 	Coord = geometry->nodes->GetCoord(iPoint);
 
           for (iDim = 0; iDim < nDim; iDim++) {
