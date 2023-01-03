@@ -2097,7 +2097,7 @@ void CMeshSolver::SetStructuralModes(CGeometry *geometry, CConfig *config) {
   unsigned short method = config->Get_RBF_method();
   unsigned long dofs = config->Get_STR_Dofs(); // STR is a surface here
   unsigned long kk;
-
+  bool read_fromfile = true;
   static int mpi_size = SU2_MPI::GetSize();
   static SU2_MPI::Status mpi_status;
 
@@ -2234,23 +2234,19 @@ void CMeshSolver::SetStructuralModes(CGeometry *geometry, CConfig *config) {
   if (rank == MASTER_NODE) cout << "Mesh filename : " << fullfile_mesh << endl;
      /*--- Store displacement of each node on the plunging surface ---*/
   /*--- Loop over markers and find the particular marker(s) (surface) to plunge ---*/
-
+  // if (! read_fromfile) {
+  //   ofstream myfile ("/home/acea/runs/SU2_rhea/r_sbw_f50/sbw_def0.txt");
+  // }
+  ofstream myfile ("/home/acea/runs/SU2_rhea/r_sbw_f50/sbw_def0.txt");
   for (iMarker = 0; iMarker < config->GetnMarker_All(); iMarker++) {
     if (config->GetMarker_All_Moving(iMarker) != YES) continue;
 
     Marker_Tag = config->GetMarker_All_TagBound(iMarker);
-
     for (jMarker = 0; jMarker < config->GetnMarker_Moving(); jMarker++) {
-      
       // X_str = X_nodes[jMarker];
       // Y_str = Y_nodes[jMarker];
       // Z_str = Z_nodes[jMarker];
       nps = X_nodes[jMarker].size();
-      vector<vector<su2double>> Css(1+dofs+nps,vector<su2double>(1+dofs+nps+1,0.0));
-      vector<su2double> sol_vec_x(nps+dofs+1,0.0);
-      vector<su2double> sol_vec_y(nps+dofs+1,0.0);
-      vector<su2double> sol_vec_z(nps+dofs+1,0.0);
-
       Moving_Tag = config->GetMarker_Moving_TagBound(jMarker);
 
       if (rank == MASTER_NODE) cout << "Marker : " <<  Marker_Tag << endl;
@@ -2258,210 +2254,235 @@ void CMeshSolver::SetStructuralModes(CGeometry *geometry, CConfig *config) {
       if ((Marker_Tag != Moving_Tag) || (config->GetKind_SurfaceMovement(jMarker) != DEFORMING)) {
         continue;
       }
- 
-      // READ STR MESH NODES
-      //SU2_OMP_MASTER
-      if (rank == MASTER_NODE){
+      /////////////////////////////
+      if (read_fromfile) {
+        for (unsigned short mode = 0; mode < STRmodes; mode++) {
+          for (iVertex = 0; iVertex < geometry->nVertex[iMarker]; iVertex++) {
+            for (iDim = 0; iDim < nDim; iDim++) {
+              xa[iDim] = geometry->nodes->GetCoord(iPoint, iDim);
 
-      // meshfile.open(fullfile_mesh);
+              nodes->SetBound_Disp(iPoint, iDim, 0.0);
+            }
+            iPoint = geometry->vertex[iMarker][iVertex]->GetNode();
 
-      kk = 0;
-      cout << "Reading structural (Surface) nodes." << endl;
-      
-      // if (meshfile.is_open()) {	
-	      
-      // 	getline(meshfile,line);
+            nodes->SetBound_Mode_X(iPoint, mode, Xi_modes[mode][jMarker][iVertex]);
+            nodes->SetBound_Mode_Y(iPoint, mode, Yi_modes[mode][jMarker][iVertex]);
+            nodes->SetBound_Mode_Z(iPoint, mode, Zi_modes[mode][jMarker][iVertex]);
+          }
+        }
+      }
+      else {
+        vector<vector<su2double>> Css(1 + dofs + nps, vector<su2double>(1 + dofs + nps + 1, 0.0));
+        vector<su2double> sol_vec_x(nps + dofs + 1, 0.0);
+        vector<su2double> sol_vec_y(nps + dofs + 1, 0.0);
+        vector<su2double> sol_vec_z(nps + dofs + 1, 0.0);
 
-      // 	while ( kk < nps ){
-	
-      // 	meshfile >> X_str[kk] >> Y_str[kk] >> Z_str[kk];
+        ///////////////
+        // READ STR MESH NODES
+        // SU2_OMP_MASTER
+        if (rank == MASTER_NODE) {
+          // meshfile.open(fullfile_mesh);
 
-      // 	kk++;
+          kk = 0;
+          cout << "Reading structural (Surface) nodes." << endl;
 
-      // 	}
+          // if (meshfile.is_open()) {
 
-      // 	meshfile.close();
-      // 	if (rank == MASTER_NODE) cout << "Reached End-of-file for Structural Mesh." <<  endl;
-	
-      // }	
-      // else cout << "Unable to open Mesh file..." << endl; 
-						       
+          // 	getline(meshfile,line);
+
+          // 	while ( kk < nps ){
+
+          // 	meshfile >> X_str[kk] >> Y_str[kk] >> Z_str[kk];
+
+          // 	kk++;
+
+          // 	}
+
+          // 	meshfile.close();
+          // 	if (rank == MASTER_NODE) cout << "Reached End-of-file for Structural Mesh." <<  endl;
+
+          // }
+          // else cout << "Unable to open Mesh file..." << endl;
+
 #ifdef HAVE_MPI
-      for (int destination=1;destination<size;destination++){
-	      SU2_MPI::Send(&X_nodes[jMarker][0], nps, MPI_DOUBLE, destination, 0, SU2_MPI::GetComm());
-	      SU2_MPI::Send(&Y_nodes[jMarker][0], nps, MPI_DOUBLE, destination, 0, SU2_MPI::GetComm());
-	      SU2_MPI::Send(&Z_nodes[jMarker][0], nps, MPI_DOUBLE, destination, 0, SU2_MPI::GetComm());
-      }
+        for (int destination = 1; destination < size; destination++) {
+          SU2_MPI::Send(&X_nodes[jMarker][0], nps, MPI_DOUBLE, destination, 0, SU2_MPI::GetComm());
+          SU2_MPI::Send(&Y_nodes[jMarker][0], nps, MPI_DOUBLE, destination, 0, SU2_MPI::GetComm());
+          SU2_MPI::Send(&Z_nodes[jMarker][0], nps, MPI_DOUBLE, destination, 0, SU2_MPI::GetComm());
+        }
 #endif
 
-      // RBF MATRIX
-      for (unsigned long ii=0;ii<nps;ii++){
+        // RBF MATRIX
+        for (unsigned long ii = 0; ii < nps; ii++) {
+          Css[0][dofs + 1 + ii] = 1.0;
+          Css[1][dofs + 1 + ii] = X_nodes[jMarker][ii];
+          Css[2][dofs + 1 + ii] = Y_nodes[jMarker][ii];
+          if (dofs == 3) Css[3][dofs + 1 + ii] = Z_nodes[jMarker][ii];
 
-	      Css[0][dofs+1+ii] = 1.0;
-	      Css[1][dofs+1+ii] = X_nodes[jMarker][ii];
-	      Css[2][dofs+1+ii] = Y_nodes[jMarker][ii];
-	      if (dofs==3) Css[3][dofs+1+ii] = Z_nodes[jMarker][ii];
+          Css[dofs + 1 + ii][0] = 1.0;
+          Css[dofs + 1 + ii][1] = X_nodes[jMarker][ii];
+          Css[dofs + 1 + ii][2] = Y_nodes[jMarker][ii];
+          if (dofs == 3) Css[dofs + 1 + ii][3] = Z_nodes[jMarker][ii];
+        }
 
-	      Css[dofs+1+ii][0] = 1.0;
-	      Css[dofs+1+ii][1] = X_nodes[jMarker][ii];
-	      Css[dofs+1+ii][2] = Y_nodes[jMarker][ii];
-	      if (dofs==3) Css[dofs+1+ii][3] = Z_nodes[jMarker][ii];
+        for (unsigned long ii = 0; ii < nps; ii++) {
+          for (unsigned long jj = 0; jj < nps; jj++) {
+            xs1[0] = X_nodes[jMarker][ii];
+            xs1[1] = Y_nodes[jMarker][ii];
+            xs1[2] = Z_nodes[jMarker][ii];
+            xs2[0] = X_nodes[jMarker][jj];
+            xs2[1] = Y_nodes[jMarker][jj];
+            xs2[2] = Z_nodes[jMarker][jj];
+
+            phi_ss = RBF_Basis_Function(xs1, xs2, method);
+
+            Css[dofs + 1 + ii][dofs + 1 + jj] = phi_ss;
+          }
+        }
+
+        Css[0][nps + dofs + 1] = 0.0;
+        Css[1][nps + dofs + 1] = 0.0;
+        Css[2][nps + dofs + 1] = 0.0;
+        if (dofs == 3) Css[3][nps + dofs + 1] = 0.0;
+      } else {
+#if HAVE_MPI
+        SU2_MPI::Recv(&X_nodes[jMarker][0], nps, MPI_DOUBLE, 0, 0, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
+        SU2_MPI::Recv(&Y_nodes[jMarker][0], nps, MPI_DOUBLE, 0, 0, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
+        SU2_MPI::Recv(&Z_nodes[jMarker][0], nps, MPI_DOUBLE, 0, 0, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
+#endif
       }
 
-      for (unsigned long ii=0;ii<nps;ii++){
-      for (unsigned long jj=0;jj<nps;jj++){
-	      
-	      xs1[0] = X_nodes[jMarker][ii] ; xs1[1] = Y_nodes[jMarker][ii] ; xs1[2] = Z_nodes[jMarker][ii];
-	      xs2[0] = X_nodes[jMarker][jj] ; xs2[1] = Y_nodes[jMarker][jj] ; xs2[2] = Z_nodes[jMarker][jj];
+      for (unsigned short mode = 0; mode < STRmodes; mode++) {
+        // READ STR MODES
+        if (rank == MASTER_NODE) {
+          // ss << mode+1;
+          // extension = to_string(mode+1);
+          // modefile.open(fullfile_mode+extension);
 
-	      phi_ss = RBF_Basis_Function(xs1,xs2,method);
+          // kk = 0;
+          // cout << "Reading Structural Mode " << mode+1 << " from file : " << fullfile_mode+extension << endl;
+          // if (modefile.is_open()) {
 
-	      Css[dofs+1+ii][dofs+1+jj] = phi_ss;      
+          // 	getline(modefile,line);
 
-      }
-      }
+          // 	while (kk < nps) {
 
-      Css[0][nps+dofs+1] = 0.0;
-      Css[1][nps+dofs+1] = 0.0;
-      Css[2][nps+dofs+1] = 0.0;	      
-      if (dofs==3) Css[3][nps+dofs+1] = 0.0;
-      }
-      else {
+          // 	modefile >> dummy1 >> dummy2 >> dummy3;
+
+          // 	PHI_X_str[kk] = dummy1;
+          // 	PHI_Y_str[kk] = dummy2;
+          // 	PHI_Z_str[kk] = dummy3;
+
+          // 	kk++;
+          // 	}
+
+          // 	modefile.close();
+          // 	if (rank == MASTER_NODE) cout << "End-of-file for Mode " <<  mode+1 << endl;
+
+          // }
+          // else cout << "Unable to read Mode... " << endl;
+          // PHI_X_str = Xi_modes[mode][jMarker];
+          // PHI_Y_str = Yi_modes[mode][jMarker];
+          // PHI_Z_str = Zi_modes[mode][jMarker];
+
+          if (rank == MASTER_NODE) {
+            cout << " Storing Mode " << mode + 1 << " displacement, for marker : ";
+            cout << Marker_Tag << "." << endl;
+          }
+
+          /*--- RBF SYSTEM. ---*/
+          for (unsigned long ii = 0; ii < nps; ii++) Css[dofs + 1 + ii][dofs + 1 + nps] = Xi_modes[mode][jMarker][ii];
+          for (unsigned long ii = 0; ii < nps + dofs + 1; ii++) sol_vec_x[ii] = 0.0;
+
+          Gauss_Elimination(Css, sol_vec_x);
+
+          for (unsigned long ii = 0; ii < nps; ii++) Css[dofs + 1 + ii][dofs + 1 + nps] = Yi_modes[mode][jMarker][ii];
+          for (unsigned long ii = 0; ii < nps + dofs + 1; ii++) sol_vec_y[ii] = 0.0;
+
+          Gauss_Elimination(Css, sol_vec_y);
+
+          for (unsigned long ii = 0; ii < nps; ii++) Css[dofs + 1 + ii][dofs + 1 + nps] = Zi_modes[mode][jMarker][ii];
+          for (unsigned long ii = 0; ii < nps + dofs + 1; ii++) sol_vec_z[ii] = 0.0;
+
+          Gauss_Elimination(Css, sol_vec_z);
+
+          cout << "will send solutions " << endl;
 
 #if HAVE_MPI
-	      SU2_MPI::Recv(&X_nodes[jMarker][0], nps, MPI_DOUBLE, 0, 0, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
-	      SU2_MPI::Recv(&Y_nodes[jMarker][0], nps, MPI_DOUBLE, 0, 0, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
-	      SU2_MPI::Recv(&Z_nodes[jMarker][0], nps, MPI_DOUBLE, 0, 0, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
+          for (int destination = 1; destination < size; destination++) {
+            cout << "sending to proc " << destination << endl;
+            SU2_MPI::Send(&sol_vec_x[0], nps + dofs + 1, MPI_DOUBLE, destination, 1, SU2_MPI::GetComm());
+            SU2_MPI::Send(&sol_vec_y[0], nps + dofs + 1, MPI_DOUBLE, destination, 2, SU2_MPI::GetComm());
+            SU2_MPI::Send(&sol_vec_z[0], nps + dofs + 1, MPI_DOUBLE, destination, 3, SU2_MPI::GetComm());
+          }
 #endif
 
-      }
-	      
-      for (unsigned short mode=0;mode<STRmodes;mode++){
-              
-      // READ STR MODES
-      if (rank == MASTER_NODE) {  
-
-	      // ss << mode+1;
-	      // extension = to_string(mode+1);
-	      // modefile.open(fullfile_mode+extension);
-
-      // kk = 0;
-      // cout << "Reading Structural Mode " << mode+1 << " from file : " << fullfile_mode+extension << endl; 
-      // if (modefile.is_open()) {
-
-      // 	getline(modefile,line);
-
-      // 	while (kk < nps) {
-	
-      // 	modefile >> dummy1 >> dummy2 >> dummy3;
-
-      // 	PHI_X_str[kk] = dummy1;
-      // 	PHI_Y_str[kk] = dummy2;
-      // 	PHI_Z_str[kk] = dummy3;
-
-      // 	kk++;
-      // 	}
-	
-      // 	modefile.close();
-      // 	if (rank == MASTER_NODE) cout << "End-of-file for Mode " <<  mode+1 << endl;
-	
-      // }	
-      // else cout << "Unable to read Mode... " << endl; 
-      // PHI_X_str = Xi_modes[mode][jMarker];
-      // PHI_Y_str = Yi_modes[mode][jMarker];
-      // PHI_Z_str = Zi_modes[mode][jMarker];
-
-      if (rank == MASTER_NODE) {
-        cout << " Storing Mode " << mode+1 <<  " displacement, for marker : ";
-        cout << Marker_Tag << "." << endl; 
-      }
-
-      /*--- RBF SYSTEM. ---*/
-      for (unsigned long ii=0;ii<nps;ii++) Css[dofs+1+ii][dofs+1+nps] = Xi_modes[mode][jMarker][ii]; 
-      for (unsigned long ii=0;ii<nps+dofs+1;ii++) sol_vec_x[ii] = 0.0;
- 
-      Gauss_Elimination(Css, sol_vec_x);
- 
-      for (unsigned long ii=0;ii<nps;ii++) Css[dofs+1+ii][dofs+1+nps] = Yi_modes[mode][jMarker][ii]; 
-      for (unsigned long ii=0;ii<nps+dofs+1;ii++) sol_vec_y[ii] = 0.0;
- 
-      Gauss_Elimination(Css, sol_vec_y);
- 
-      for (unsigned long ii=0;ii<nps;ii++) Css[dofs+1+ii][dofs+1+nps] = Zi_modes[mode][jMarker][ii]; 
-      for (unsigned long ii=0;ii<nps+dofs+1;ii++) sol_vec_z[ii] = 0.0;
- 
-      Gauss_Elimination(Css, sol_vec_z);
-
-      cout << "will send solutions " << endl;
-       
+        } else {
 #if HAVE_MPI
-      for (int destination=1;destination<size;destination++) {
-	      cout << "sending to proc " << destination << endl;
-	      SU2_MPI::Send(&sol_vec_x[0], nps+dofs+1, MPI_DOUBLE, destination, 1, SU2_MPI::GetComm());
-	      SU2_MPI::Send(&sol_vec_y[0], nps+dofs+1, MPI_DOUBLE, destination, 2, SU2_MPI::GetComm());
-	      SU2_MPI::Send(&sol_vec_z[0], nps+dofs+1, MPI_DOUBLE, destination, 3, SU2_MPI::GetComm());
-      }
+          SU2_MPI::Recv(&sol_vec_x[0], nps + dofs + 1, MPI_DOUBLE, 0, 1, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
+          SU2_MPI::Recv(&sol_vec_y[0], nps + dofs + 1, MPI_DOUBLE, 0, 2, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
+          SU2_MPI::Recv(&sol_vec_z[0], nps + dofs + 1, MPI_DOUBLE, 0, 3, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
 #endif
+        }
+        for (iVertex = 0; iVertex < geometry->nVertex[iMarker]; iVertex++) {
+          /*--- Set node displacement for volume deformation ---*/
 
+          phi_x = 0.0;
+          phi_y = 0.0;
+          phi_z = 0.0;
+
+          iPoint = geometry->vertex[iMarker][iVertex]->GetNode();
+
+          for (iDim = 0; iDim < nDim; iDim++) {
+            xa[iDim] = geometry->nodes->GetCoord(iPoint, iDim);
+
+            nodes->SetBound_Disp(iPoint, iDim, 0.0);
+          }
+
+          phi_x = sol_vec_x[0] + xa[0] * sol_vec_x[1] + xa[1] * sol_vec_x[2];
+          if (dofs == 3) phi_x += xa[2] * sol_vec_x[3];
+
+          phi_y = sol_vec_y[0] + xa[0] * sol_vec_y[1] + xa[1] * sol_vec_y[2];
+          if (dofs == 3) phi_y += xa[2] * sol_vec_y[3];
+
+          phi_z = sol_vec_z[0] + xa[0] * sol_vec_z[1] + xa[1] * sol_vec_z[2];
+          if (dofs == 3) phi_z += xa[2] * sol_vec_z[3];
+
+          for (unsigned long ii = 0; ii < nps; ii++) {
+            xs1[0] = X_nodes[jMarker][ii];
+            xs1[1] = Y_nodes[jMarker][ii];
+            xs1[2] = Z_nodes[jMarker][ii];
+
+            phi_as = RBF_Basis_Function(xa, xs1, method);
+
+            phi_x += (phi_as * sol_vec_x[ii + dofs + 1]);
+            phi_y += (phi_as * sol_vec_y[ii + dofs + 1]);
+            phi_z += (phi_as * sol_vec_z[ii + dofs + 1]);
+          }
+
+          nodes->SetBound_Mode_X(iPoint, mode, phi_x);
+          nodes->SetBound_Mode_Y(iPoint, mode, phi_y);
+          nodes->SetBound_Mode_Z(iPoint, mode, phi_z);
+          if (myfile.is_open()) {
+            myfile << geometry->nodes->GetGlobalIndex(iPoint) << ' ';
+            // myfile << phi_x + xa[0] << ' ';
+            // myfile << phi_y + xa[1] << ' ';
+            // myfile << phi_z + xa[2] << ' ';
+            // myfile << phi_x         << ' ';
+            // myfile << phi_y         << ' ';
+            // myfile << phi_z         << ' ';
+            myfile << xa[0] << ' ';
+            myfile << xa[1] << ' ';
+            myfile << xa[2] << ' ';
+            myfile << '\n';
+          } else
+            cout << "Unable to open file";
+        }
       }
-      else {
-#if HAVE_MPI
-       SU2_MPI::Recv(&sol_vec_x[0], nps+dofs+1, MPI_DOUBLE, 0, 1, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
-       SU2_MPI::Recv(&sol_vec_y[0], nps+dofs+1, MPI_DOUBLE, 0, 2, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
-       SU2_MPI::Recv(&sol_vec_z[0], nps+dofs+1, MPI_DOUBLE, 0, 3, SU2_MPI::GetComm(), MPI_STATUS_IGNORE);
-#endif
-      }
-
-      for (iVertex = 0; iVertex < geometry->nVertex[iMarker]; iVertex++) {
-
-        /*--- Set node displacement for volume deformation ---*/
-
-	phi_x = 0.0;
-	phi_y = 0.0;
-	phi_z = 0.0;
-
-        iPoint = geometry->vertex[iMarker][iVertex]->GetNode();
-
-	for (iDim = 0; iDim < nDim; iDim++) {
-		
-		xa[iDim] = geometry->nodes->GetCoord(iPoint,iDim);
-
-		nodes->SetBound_Disp(iPoint, iDim, 0.0);
-	}
-
-	phi_x = sol_vec_x[0] + xa[0]*sol_vec_x[1] + xa[1]*sol_vec_x[2];  
-      	if (dofs==3) phi_x += xa[2]*sol_vec_x[3];
-	
-	phi_y = sol_vec_y[0] + xa[0]*sol_vec_y[1] + xa[1]*sol_vec_y[2];  
-      	if (dofs==3) phi_y += xa[2]*sol_vec_y[3];
-
-	phi_z = sol_vec_z[0] + xa[0]*sol_vec_z[1] + xa[1]*sol_vec_z[2];  
-      	if (dofs==3) phi_z += xa[2]*sol_vec_z[3];
-
-	for (unsigned long ii=0;ii<nps;ii++){
-
-		xs1[0] = X_nodes[jMarker][ii] ; xs1[1] = Y_nodes[jMarker][ii] ; xs1[2] = Z_nodes[jMarker][ii];
-
-		phi_as = RBF_Basis_Function(xa,xs1,method);
- 
-		phi_x += (phi_as * sol_vec_x[ii+dofs+1]);	
-		phi_y += (phi_as * sol_vec_y[ii+dofs+1]);	
-		phi_z += (phi_as * sol_vec_z[ii+dofs+1]);	
-
-	}
-	
-	nodes->SetBound_Mode_X(iPoint, mode, phi_x);
-	nodes->SetBound_Mode_Y(iPoint, mode, phi_y);
-	nodes->SetBound_Mode_Z(iPoint, mode, phi_z);
-
-      }
-
-      }
-
-
     }
   }
- 
+     myfile.close();
+}
 }
 
 su2double CMeshSolver::RBF_Basis_Function(vector<su2double> x1, vector<su2double> x2, unsigned short method) {
