@@ -2258,12 +2258,11 @@ void CMeshSolver::SetStructuralModes(CGeometry *geometry, CConfig *config) {
       if (read_fromfile) {
         for (unsigned short mode = 0; mode < STRmodes; mode++) {
           for (iVertex = 0; iVertex < geometry->nVertex[iMarker]; iVertex++) {
+	    iPoint = geometry->vertex[iMarker][iVertex]->GetNode();
             for (iDim = 0; iDim < nDim; iDim++) {
               xa[iDim] = geometry->nodes->GetCoord(iPoint, iDim);
-
               nodes->SetBound_Disp(iPoint, iDim, 0.0);
             }
-            iPoint = geometry->vertex[iMarker][iVertex]->GetNode();
 
             nodes->SetBound_Mode_X(iPoint, mode, Xi_modes[mode][jMarker][iVertex]);
             nodes->SetBound_Mode_Y(iPoint, mode, Yi_modes[mode][jMarker][iVertex]);
