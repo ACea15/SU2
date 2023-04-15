@@ -2766,7 +2766,8 @@ void CMeshSolver::Calculate_Generalized_Forces(su2double* &gen_forces, CGeometry
 		 gen_forces[mode] += (nodes->GetBound_Mode_Z(iPoint, mode)*
 				      (cos(Alpha)*Force[2]-sin(Alpha)*Force[0])*RefArea +
 				      nodes->GetBound_Mode_X(iPoint, mode)*
-				      (cos(Alpha)*Force[0]+sin(Alpha)*Force[2])*RefArea);
+				      (cos(Alpha)*Force[0]+sin(Alpha)*Force[2])*RefArea +
+				      nodes->GetBound_Mode_Y(iPoint, mode) * Force[1]*RefArea);
 	} 
       }
 
